@@ -10,7 +10,6 @@ async def get_conn():
 async def init_db():
     conn = await get_conn()
     try:
-        # Таблица пользователей
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -18,7 +17,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        # Таблица товаров
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
@@ -28,7 +26,6 @@ async def init_db():
                 is_sold BOOLEAN DEFAULT FALSE
             )
         ''')
-        # Таблица заказов
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 id SERIAL PRIMARY KEY,
@@ -54,13 +51,27 @@ async def ensure_user(user_id: int, username: str):
     finally:
         await conn.close()
 
+async def add_product_to_db(title, price, content):
+    conn = await get_conn()
+    try:
+        await conn.execute('INSERT INTO products (title, price_usd, content) VALUES ($1, $2, $3)', 
+                           title, price, content)
+    finally:
+        await conn.close()
+
+async def get_all_products():
+    conn = await get_conn()
+    try:
+        rows = await conn.fetch('SELECT * FROM products WHERE is_sold = FALSE')
+        return [dict(r) for r in rows]
+    finally:
+        await conn.close()
+
 async def create_order(payment_id: str, user_id: int, product_id: int, amount: float):
     conn = await get_conn()
     try:
-        await conn.execute('''
-            INSERT INTO orders (payment_id, user_id, product_id, amount_ltc)
-            VALUES ($1, $2, $3, $4)
-        ''', payment_id, user_id, product_id, amount)
+        await conn.execute('INSERT INTO orders (payment_id, user_id, product_id, amount_ltc) VALUES ($1, $2, $3, $4)',
+                           payment_id, user_id, product_id, amount)
     finally:
         await conn.close()
 
