@@ -81,3 +81,37 @@ async def add_product_to_db(title, price, content, city):
                            title, price, content, city)
     finally:
         await conn.close()
+# db.py ning pastki qismiga qo'shing:
+
+async def get_product(product_id):
+    conn = await get_conn()
+    try:
+        row = await conn.fetchrow('SELECT * FROM products WHERE id = $1', int(product_id))
+        return dict(row) if row else None
+    finally:
+        await conn.close()
+
+async def create_order(user_id, product_id, payment_id, amount_ltc):
+    conn = await get_conn()
+    try:
+        await conn.execute('''
+            INSERT INTO orders (user_id, product_id, payment_id, amount_ltc, status)
+            VALUES ($1, $2, $3, $4, 'waiting')
+        ''', user_id, int(product_id), str(payment_id), float(amount_ltc))
+    finally:
+        await conn.close()
+
+async def get_order_by_payment_id(payment_id):
+    conn = await get_conn()
+    try:
+        row = await conn.fetchrow('SELECT * FROM orders WHERE payment_id = $1', str(payment_id))
+        return dict(row) if row else None
+    finally:
+        await conn.close()
+
+async def update_order_status(payment_id, status):
+    conn = await get_conn()
+    try:
+        await conn.execute('UPDATE orders SET status = $1 WHERE payment_id = $2', status, str(payment_id))
+    finally:
+        await conn.close()
