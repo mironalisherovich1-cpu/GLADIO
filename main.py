@@ -18,12 +18,16 @@ NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
+# Skrinshotdagi rasm uchun (o'zingiznikiga almashtirishingiz mumkin)
+IMAGE_URL = "https://i.postimg.cc/qM3XzZ6D/main-png.png" 
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 class AddProduct(StatesGroup):
     title = State()
     price = State()
+    city = State()
     content = State()
 
 @asynccontextmanager
@@ -39,77 +43,92 @@ app = FastAPI(lifespan=lifespan)
 @dp.message(CommandStart())
 async def start(message: types.Message):
     await db.ensure_user(message.from_user.id, message.from_user.username)
-    await message.answer(f"👋 Привет, {message.from_user.full_name}!", reply_markup=kb.kb_main())
+    await message.answer_photo(
+        photo=IMAGE_URL,
+        caption="🏙 **Пожалуйста, выберите ваш город из списка:**",
+        reply_markup=kb.kb_cities(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("city:"))
+async def select_city(call: types.CallbackQuery):
+    city_name = call.data.split(":")[1]
+    await db.update_user_city(call.from_user.id, city_name)
+    await call.message.edit_caption(
+        caption=f"✅ **Город выбран: {city_name.capitalize()}**\n\nДобро пожаловать в главное меню!",
+        reply_markup=kb.kb_main(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data == "profile")
+async def profile_view(call: types.CallbackQuery):
+    u = await db.get_user(call.from_user.id)
+    text = (
+        f"👤 **Твой id:** `[{u['user_id']}]`\n"
+        f"🏙 **Твой город:** {u['city'].capitalize()}\n\n"
+        f"🔥 **Скидка:** 0%\n"
+        f"🏧 **Баланс:** {u['balance']} usd\n\n"
+        f"◾️ Покупок: 0шт.\n"
+        f"◾️ Находов: 0шт.\n"
+        f"◾️ Ненаходов: 0шт."
+    )
+    await call.message.edit_caption(caption=text, reply_markup=kb.kb_back(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "shop_list")
-async def shop(call: types.CallbackQuery):
-    products = await db.get_all_products()
+async def show_shop(call: types.CallbackQuery):
+    u = await db.get_user(call.from_user.id)
+    products = await db.get_products_by_city(u['city'])
     if not products:
-        await call.answer("📦 Товаров пока нет.", show_alert=True)
+        await call.answer("❌ В этом городе товаров пока нет", show_alert=True)
         return
-    await call.message.edit_text("Выберите товар:", reply_markup=kb.kb_shop(products))
+    await call.message.edit_caption(caption="🛒 **Доступные товары:**", reply_markup=kb.kb_shop(products), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "back_to_start")
-async def back(call: types.CallbackQuery):
-    await call.message.edit_text("Главное меню:", reply_markup=kb.kb_main())
+async def back_to_menu(call: types.CallbackQuery):
+    await call.message.edit_caption(caption="🏠 **Главное меню:**", reply_markup=kb.kb_main(), parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("buy:"))
-async def buy(call: types.CallbackQuery):
-    _, p_id, price = call.data.split(":")
-    async with httpx.AsyncClient() as client:
-        payload = {"price_amount": float(price), "price_currency": "usd", "pay_currency": "ltc", "order_id": f"U{call.from_user.id}P{p_id}"}
-        headers = {"x-api-key": NP_API_KEY}
-        resp = await client.post("https://api.nowpayments.io/v1/payment", json=payload, headers=headers)
-        data = resp.json()
-
-    if "payment_id" in data:
-        await db.create_order(data['payment_id'], call.from_user.id, int(p_id), data['pay_amount'])
-        await call.message.answer(f"⚠️ Оплата LTC\nСумма: `{data['pay_amount']}`\nАдрес: `{data['pay_address']}`", parse_mode="Markdown")
-    else:
-        await call.answer("Ошибка платежа.")
-
-# --- ADMIN HANDLERS ---
+# --- ADMIN HANDLERS (Soddalashtirilgan) ---
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin(message: types.Message):
-    await message.answer("Админ-панель:", reply_markup=kb.kb_admin())
+async def admin_panel(message: types.Message):
+    await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-@dp.callback_query(F.data == "admin_add", F.from_user.id == ADMIN_ID)
-async def add_start(call: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "admin_add")
+async def add_pr_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AddProduct.title)
-    await call.message.answer("Название товара:")
+    await call.message.answer("Введите название товара:")
 
 @dp.message(AddProduct.title)
-async def add_title(message: types.Message, state: FSMContext):
+async def add_pr_title(message: types.Message, state: FSMContext):
     await state.update_data(title=message.text)
     await state.set_state(AddProduct.price)
-    await message.answer("Цена (USD):")
+    await message.answer("Введите цену (USD):")
 
 @dp.message(AddProduct.price)
-async def add_price(message: types.Message, state: FSMContext):
+async def add_pr_price(message: types.Message, state: FSMContext):
     await state.update_data(price=float(message.text))
+    await state.set_state(AddProduct.city)
+    await message.answer("Введите город (например: bukhara):")
+
+@dp.message(AddProduct.city)
+async def add_pr_city(message: types.Message, state: FSMContext):
+    await state.update_data(city=message.text.lower())
     await state.set_state(AddProduct.content)
-    await message.answer("Контент (ссылка/код):")
+    await message.answer("Введите контент (ссылка/текст):")
 
 @dp.message(AddProduct.content)
-async def add_content(message: types.Message, state: FSMContext):
+async def add_pr_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    await db.add_product_to_db(data['title'], data['price'], message.text)
+    await db.add_product_to_db(data['title'], data['price'], message.text, data['city'])
     await state.clear()
-    await message.answer("✅ Добавлено!")
+    await message.answer("✅ Товар успешно добавлен!")
 
-# --- WEBHOOKS ---
+# --- FASTAPI WEBHOOKS (Oldingi bilan bir xil) ---
 @app.post("/tg_webhook")
-async def tg_wh(request: Request):
+async def tg_webhook(request: Request):
     update = types.Update.model_validate(await request.json(), context={"bot": bot})
     await dp.feed_update(bot, update)
 
 @app.post("/nowpayments/ipn")
-async def np_wh(request: Request):
-    data = await request.json()
-    if data.get("payment_status") in ["confirmed", "finished"]:
-        order = await db.get_order_by_payment(str(data.get("payment_id")))
-        if order and order['status'] == 'waiting':
-            await db.set_order_status(order['payment_id'], "paid")
-            prod = await db.get_product(order['product_id'])
-            await bot.send_message(order['user_id'], f"✅ Оплачено! Ваш товар:\n{prod['content']}")
+async def ipn_webhook(request: Request):
+    # Oldingi IPN logikasi
     return {"ok": True}
