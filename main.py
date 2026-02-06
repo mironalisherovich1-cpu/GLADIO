@@ -4,6 +4,8 @@ import httpx
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, F
+# MANA BU IMPORTLAR QO'SHILDI:
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton 
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
@@ -12,6 +14,8 @@ import db
 import keyboards as kb
 
 logging.basicConfig(level=logging.INFO)
+
+# --- SOZLAMALAR ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
@@ -21,11 +25,12 @@ DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- STATES ---
 class AddProduct(StatesGroup):
     title = State()
     price = State()
     city = State()
-    content = State() # Rasm yoki matn shu yerda olinadi
+    content = State() 
 
 class UserState(StatesGroup):
     writing_review = State()
@@ -37,6 +42,7 @@ class AdminState(StatesGroup):
     change_balance_amount = State()
     change_photo = State()
 
+# --- LIFESPAN ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
@@ -45,6 +51,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# --- NOWPAYMENTS ---
 async def create_nowpayments_invoice(price_usd):
     url = "https://api.nowpayments.io/v1/payment"
     headers = {"x-api-key": NP_API_KEY, "Content-Type": "application/json"}
@@ -55,22 +62,22 @@ async def create_nowpayments_invoice(price_usd):
             return r.json() if r.status_code == 201 else None
         except: return None
 
-# --- YORDAMCHI: TOVARNI MIJOZGA YUBORISH ---
+# --- YORDAMCHI: TOVARNI YUBORISH ---
 async def send_product_to_user(user_id, product):
-    # Agar tovar RASM bo'lsa (content_type='photo')
+    # Agar Rasm bo'lsa
     if product.get('content_type') == 'photo':
         await bot.send_photo(
             chat_id=user_id,
             photo=product['content'],
-            caption=f"📦 **Sizning tovaringiz:** {product['title']}\n\n✅ Xaridingiz uchun rahmat!",
+            caption=f"📦 **Tovaringiz:** {product['title']}\n\n✅ Xaridingiz uchun rahmat!",
             reply_markup=kb.kb_leave_review(),
             parse_mode="Markdown"
         )
-    # Agar tovar MATN bo'lsa
+    # Agar Matn bo'lsa
     else:
         await bot.send_message(
             chat_id=user_id,
-            text=f"📦 **Sizning tovaringiz:**\n\n`{product['content']}`\n\n✅ Xaridingiz uchun rahmat!",
+            text=f"📦 **Tovaringiz:**\n\n`{product['content']}`\n\n✅ Xaridingiz uchun rahmat!",
             reply_markup=kb.kb_leave_review(),
             parse_mode="Markdown"
         )
@@ -147,11 +154,7 @@ async def buy_start(call: types.CallbackQuery):
     if u['balance'] >= pr['price_usd']:
         await db.admin_update_balance(call.from_user.id, -pr['price_usd'])
         await call.message.delete()
-        
-        # TOVARNI YUBORISH (Rasm yoki Matn)
         await send_product_to_user(call.from_user.id, pr)
-        
-        # Sotildi qilish
         conn = await db.get_conn()
         await conn.execute('UPDATE products SET is_sold = TRUE WHERE id = $1', int(pid))
         await conn.close()
@@ -175,11 +178,10 @@ async def show_stats(call: types.CallbackQuery):
     u, b, s = await db.get_stats()
     await call.message.edit_text(f"📊 User: {u}\n💰 Balance: {b}\n📦 Sold: {s}", reply_markup=kb.kb_admin())
 
-# 1. DELETE PRODUCT (YANGI)
+# 1. DELETE PRODUCT (TUZATILDI)
 @dp.callback_query(F.data == "admin_delete")
 async def admin_delete_list(call: types.CallbackQuery):
-    # Barcha shaharlar tovarlarini ko'rsatamiz (yoki so'rash mumkin, hozircha oddiy)
-    # Keling, avval shaharni so'raymiz
+    # Bu yerda InlineKeyboardMarkup kerak edi, endi import qilingan
     await call.message.edit_text("🏙 Qaysi shahardan o'chiramiz?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Bukhara", callback_data="del_city:bukhara")],
         [InlineKeyboardButton(text="Tashkent", callback_data="del_city:tashkent")],
@@ -200,13 +202,13 @@ async def admin_delete_final(call: types.CallbackQuery):
     pid = call.data.split(":")[1]
     await db.delete_product(pid)
     await call.answer("✅ Tovar o'chirildi!", show_alert=True)
-    await admin_panel(call.message) # Adminga qaytish
+    await admin_panel(call.message)
 
 @dp.callback_query(F.data == "back_to_admin")
 async def back_admin(call: types.CallbackQuery):
     await call.message.edit_text("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# 2. ADD PRODUCT (RASM QO'SHILDI)
+# 2. ADD PRODUCT
 @dp.callback_query(F.data == "admin_add")
 async def add_pr_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AddProduct.title)
@@ -235,20 +237,19 @@ async def add_city(m: types.Message, state: FSMContext):
 @dp.message(AddProduct.content)
 async def add_content_finish(m: types.Message, state: FSMContext):
     data = await state.get_data()
-    
-    # Rasm yuborildimi?
+    # Rasm yoki Matn ekanini aniqlash
     if m.photo:
-        content = m.photo[-1].file_id # Rasm ID si
+        content = m.photo[-1].file_id
         c_type = "photo"
-        msg_text = "✅ Tovar (RASM) qo'shildi!"
+        msg = "✅ Tovar (RASM) qo'shildi!"
     else:
-        content = m.text # Matn
+        content = m.text
         c_type = "text"
-        msg_text = "✅ Tovar (MATN) qo'shildi!"
+        msg = "✅ Tovar (MATN) qo'shildi!"
 
     await db.add_product_to_db(data['title'], data['price'], content, data['city'], c_type)
     await state.clear()
-    await m.answer(msg_text, reply_markup=kb.kb_admin())
+    await m.answer(msg, reply_markup=kb.kb_admin())
 
 # --- RASM VA BALANS SOZLAMALARI ---
 @dp.callback_query(F.data == "admin_photo")
