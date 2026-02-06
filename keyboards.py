@@ -1,10 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 def kb_reply_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🏠 Главное меню")]],
-        resize_keyboard=True, persistent=True
-    )
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🏠 Главное меню")]], resize_keyboard=True, persistent=True)
 
 def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -23,7 +20,6 @@ def kb_cities():
 
 def kb_profile():
     return InlineKeyboardMarkup(inline_keyboard=[
-        # Balans to'ldirish va Promokod
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit_balance")],
         [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
@@ -37,20 +33,29 @@ def kb_shop(products):
     buttons.append([InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# 🔥 KUCHAYTIRILGAN ADMIN PANEL
+# --- ADMIN PANEL ---
 def kb_admin():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add")],
+        [InlineKeyboardButton(text="🗑 Удалить товар", callback_data="admin_delete")], # YANGI
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="💰 Изменить баланс юзера", callback_data="admin_balance")],
-        [InlineKeyboardButton(text="🖼 Изменить фото меню", callback_data="admin_photo")],
+        [InlineKeyboardButton(text="💰 Баланс юзера", callback_data="admin_balance")],
+        [InlineKeyboardButton(text="🖼 Изменить фото", callback_data="admin_photo")],
         [InlineKeyboardButton(text="⬅️ Выйти", callback_data="back_to_start")]
     ])
 
+# O'chirish uchun ro'yxat
+def kb_admin_delete_list(products):
+    buttons = []
+    for p in products:
+        # Tovar nomi va narxi + ❌ belgisi
+        btn_text = f"❌ {p['title']} ({p['price_usd']}$)"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"del_pr:{p['id']}")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def kb_back():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
-    ])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]])
 
 def kb_leave_review():
     return InlineKeyboardMarkup(inline_keyboard=[
