@@ -18,43 +18,40 @@ def kb_cities():
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
     ])
 
+# YANGILANGAN PROFIL
 def kb_profile():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="deposit_balance")],
-        [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="enter_promo")],
+        [InlineKeyboardButton(text="📜 История покупок", callback_data="history"), InlineKeyboardButton(text="👥 Рефералка", callback_data="referral")],
+        [InlineKeyboardButton(text="🎁 Промокод", callback_data="enter_promo")],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
     ])
 
-# --- O'ZGARISH SHU YERDA ---
 def kb_shop(grouped_products):
     buttons = []
     for p in grouped_products:
-        # OLDIN: f"{p['title']} ({p['count']} шт) - {p['price_usd']}$"
-        # HOZIR: Faqat Nomi va Narxi. (X shtuk degan joyi olib tashlandi)
+        # X shtuk ko'rinmaydi
         btn_text = f"{p['title']} - {p['price_usd']}$"
-        
         callback = f"buy_title:{p['title']}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
-    
     buttons.append([InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-# ---------------------------
 
+# YANGILANGAN ADMIN
 def kb_admin():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add")],
-        [InlineKeyboardButton(text="🗑 Удалить группу товаров", callback_data="admin_delete")],
+        [InlineKeyboardButton(text="🗑 Удалить группу", callback_data="admin_delete")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")], # YANGI
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="💰 Баланс юзера", callback_data="admin_balance")],
         [InlineKeyboardButton(text="🖼 Изменить фото", callback_data="admin_photo")],
         [InlineKeyboardButton(text="⬅️ Выйти", callback_data="back_to_start")]
     ])
 
-# Admin o'chirayotganda sonini ko'rishi kerak (o'zi uchun qulaylik)
 def kb_admin_delete_list(grouped_products):
     buttons = []
     for p in grouped_products:
-        # Bu yerda admin nechta borligini ko'rib turadi
         btn_text = f"❌ {p['title']} (Jami: {p['count']} ta)"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"del_grp:{p['title']}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
