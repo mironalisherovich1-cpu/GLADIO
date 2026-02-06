@@ -25,32 +25,38 @@ def kb_profile():
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
     ])
 
-def kb_shop(products):
+# --- O'ZGARISH SHU YERDA ---
+def kb_shop(grouped_products):
     buttons = []
-    for p in products:
+    for p in grouped_products:
+        # OLDIN: f"{p['title']} ({p['count']} шт) - {p['price_usd']}$"
+        # HOZIR: Faqat Nomi va Narxi. (X shtuk degan joyi olib tashlandi)
         btn_text = f"{p['title']} - {p['price_usd']}$"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"buy:{p['id']}")])
+        
+        callback = f"buy_title:{p['title']}"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
+    
     buttons.append([InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+# ---------------------------
 
-# --- ADMIN PANEL ---
 def kb_admin():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить товар", callback_data="admin_add")],
-        [InlineKeyboardButton(text="🗑 Удалить товар", callback_data="admin_delete")], # YANGI
+        [InlineKeyboardButton(text="🗑 Удалить группу товаров", callback_data="admin_delete")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton(text="💰 Баланс юзера", callback_data="admin_balance")],
         [InlineKeyboardButton(text="🖼 Изменить фото", callback_data="admin_photo")],
         [InlineKeyboardButton(text="⬅️ Выйти", callback_data="back_to_start")]
     ])
 
-# O'chirish uchun ro'yxat
-def kb_admin_delete_list(products):
+# Admin o'chirayotganda sonini ko'rishi kerak (o'zi uchun qulaylik)
+def kb_admin_delete_list(grouped_products):
     buttons = []
-    for p in products:
-        # Tovar nomi va narxi + ❌ belgisi
-        btn_text = f"❌ {p['title']} ({p['price_usd']}$)"
-        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"del_pr:{p['id']}")])
+    for p in grouped_products:
+        # Bu yerda admin nechta borligini ko'rib turadi
+        btn_text = f"❌ {p['title']} (Jami: {p['count']} ta)"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"del_grp:{p['title']}")])
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
