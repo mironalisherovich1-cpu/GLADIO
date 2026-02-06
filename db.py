@@ -11,88 +11,96 @@ async def get_conn():
 async def init_db():
     conn = await get_conn()
     try:
-        # Jadvallar (Agar yo'q bo'lsa)
         await conn.execute('''CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, balance FLOAT DEFAULT 0.0, city TEXT DEFAULT 'bukhara', promo_used BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, title TEXT, price_usd FLOAT, content TEXT, city TEXT, is_sold BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, title TEXT, price_usd FLOAT, content TEXT, city TEXT, is_sold BOOLEAN DEFAULT FALSE, content_type TEXT DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, payment_id TEXT UNIQUE, user_id BIGINT, product_id INTEGER, amount_ltc FLOAT, status TEXT DEFAULT 'waiting', type TEXT DEFAULT 'product', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
 
-        # --- SMART UPDATE (Yangi ustunlarni qo'shish) ---
-        # 1. content_type (rasm yoki matn ekanini bilish uchun)
+        # Smart Updates
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS content_type TEXT DEFAULT 'text'")
-        # 2. Boshqa kerakli ustunlar
         await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_used BOOLEAN DEFAULT FALSE')
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
         
-        # Boshlang'ich rasm
         await conn.execute('''INSERT INTO settings (key, value) VALUES ('main_image', 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png') ON CONFLICT DO NOTHING''')
-        
-        logging.info("✅ Baza yangilandi (Content Type & Delete qo'shildi).")
+        logging.info("✅ Baza yangilandi.")
     finally:
         await conn.close()
 
-# --- MAHSULOTNI O'CHIRISH VA QO'SHISH ---
-async def delete_product(product_id):
+# --- YANGI: MAGAZIN UCHUN GURUHLASH ---
+async def get_grouped_products_by_city(city):
     conn = await get_conn()
     try:
-        await conn.execute('DELETE FROM products WHERE id = $1', int(product_id))
+        # Bir xil nomdagi tovarlarni bitta qilib, sonini (count) hisoblaymiz
+        rows = await conn.fetch('''
+            SELECT title, price_usd, COUNT(*) as count 
+            FROM products 
+            WHERE city = $1 AND is_sold = FALSE 
+            GROUP BY title, price_usd
+            ORDER BY count DESC
+        ''', city)
+        return [dict(r) for r in rows]
     finally:
         await conn.close()
 
-async def add_product_to_db(title, price, content, city, c_type):
+async def get_one_product_by_title(title, city):
     conn = await get_conn()
     try:
-        # content_type ni ham saqlaymiz
-        await conn.execute('''
-            INSERT INTO products (title, price_usd, content, city, is_sold, content_type) 
-            VALUES ($1, $2, $3, $4, FALSE, $5)
-        ''', title, price, content, city, c_type)
-    finally:
-        await conn.close()
-
-# --- QOLGAN FUNKSIYALAR (O'zgarishsiz) ---
-async def ensure_user(user_id, username):
-    conn = await get_conn()
-    try:
-        await conn.execute('INSERT INTO users (user_id, username, promo_used) VALUES ($1, $2, FALSE) ON CONFLICT (user_id) DO UPDATE SET username = $2', user_id, username)
-    finally:
-        await conn.close()
-
-async def get_user(user_id):
-    conn = await get_conn()
-    try:
-        row = await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)
+        # Shu nomdagi birinchi sotilmagan tovarni olib beramiz
+        row = await conn.fetchrow('''
+            SELECT * FROM products 
+            WHERE title = $1 AND city = $2 AND is_sold = FALSE 
+            LIMIT 1
+        ''', title, city)
         return dict(row) if row else None
     finally:
         await conn.close()
 
-async def update_user_city(user_id, city):
+# --- ADMIN: DELETE LOGIKASI ---
+async def delete_product_group(title, city):
     conn = await get_conn()
     try:
-        await conn.execute('UPDATE users SET city = $1 WHERE user_id = $2', city, user_id)
+        # Shu nomdagi BARCHA sotilmagan tovarlarni o'chirish (yoki bittalab)
+        # Hozircha bittalab o'chirish qiyin bo'lgani uchun, nom bo'yicha hammasini o'chiramiz
+        await conn.execute('DELETE FROM products WHERE title = $1 AND city = $2 AND is_sold = FALSE', title, city)
     finally:
         await conn.close()
+
+# --- ESKI LEKIN KERAKLI FUNKSIYALAR ---
+async def add_product_to_db(title, price, content, city, c_type):
+    conn = await get_conn()
+    try:
+        await conn.execute('INSERT INTO products (title, price_usd, content, city, is_sold, content_type) VALUES ($1, $2, $3, $4, FALSE, $5)', title, price, content, city, c_type)
+    finally: await conn.close()
+
+async def ensure_user(user_id, username):
+    conn = await get_conn()
+    try: await conn.execute('INSERT INTO users (user_id, username, promo_used) VALUES ($1, $2, FALSE) ON CONFLICT (user_id) DO UPDATE SET username = $2', user_id, username)
+    finally: await conn.close()
+
+async def get_user(user_id):
+    conn = await get_conn()
+    try: return dict(await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)) if user_id else None
+    finally: await conn.close()
+
+async def update_user_city(user_id, city):
+    conn = await get_conn()
+    try: await conn.execute('UPDATE users SET city = $1 WHERE user_id = $2', city, user_id)
+    finally: await conn.close()
 
 async def set_promo_used(user_id, amount):
     conn = await get_conn()
-    try:
-        await conn.execute('UPDATE users SET balance = balance + $1, promo_used = TRUE WHERE user_id = $2', amount, user_id)
-    finally:
-        await conn.close()
+    try: await conn.execute('UPDATE users SET balance = balance + $1, promo_used = TRUE WHERE user_id = $2', amount, user_id)
+    finally: await conn.close()
 
 async def admin_update_balance(user_id, amount):
     conn = await get_conn()
-    try:
-        await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
-    finally:
-        await conn.close()
+    try: await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
+    finally: await conn.close()
 
 async def add_balance(user_id, amount):
     conn = await get_conn()
-    try:
-        await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
-    finally:
-        await conn.close()
+    try: await conn.execute('UPDATE users SET balance = balance + $1 WHERE user_id = $2', amount, user_id)
+    finally: await conn.close()
 
 async def get_stats():
     conn = await get_conn()
@@ -101,8 +109,7 @@ async def get_stats():
         b = await conn.fetchval('SELECT COALESCE(SUM(balance), 0) FROM users')
         s = await conn.fetchval('SELECT COUNT(*) FROM products WHERE is_sold = TRUE')
         return u, b, s
-    finally:
-        await conn.close()
+    finally: await conn.close()
 
 async def get_main_image():
     conn = await get_conn()
@@ -114,18 +121,9 @@ async def update_main_image(new_url):
     try: await conn.execute("UPDATE settings SET value = $1 WHERE key = 'main_image'", new_url)
     finally: await conn.close()
 
-async def get_products_by_city(city):
+async def get_product(pid): # ID bo'yicha olish (IPN uchun kerak)
     conn = await get_conn()
-    try:
-        rows = await conn.fetch('SELECT * FROM products WHERE city = $1 AND is_sold = FALSE ORDER BY id DESC', city)
-        return [dict(r) for r in rows]
-    finally: await conn.close()
-
-async def get_product(pid):
-    conn = await get_conn()
-    try:
-        row = await conn.fetchrow('SELECT * FROM products WHERE id = $1', int(pid))
-        return dict(row) if row else None
+    try: return dict(await conn.fetchrow('SELECT * FROM products WHERE id = $1', int(pid)))
     finally: await conn.close()
 
 async def create_order(uid, pid, pay_id, amount, order_type='product'):
@@ -137,9 +135,7 @@ async def create_order(uid, pid, pay_id, amount, order_type='product'):
 
 async def get_order_by_payment_id(pid):
     conn = await get_conn()
-    try:
-        row = await conn.fetchrow('SELECT * FROM orders WHERE payment_id = $1', str(pid))
-        return dict(row) if row else None
+    try: return dict(await conn.fetchrow('SELECT * FROM orders WHERE payment_id = $1', str(pid)))
     finally: await conn.close()
 
 async def update_order_status(pid, status):
