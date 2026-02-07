@@ -18,17 +18,20 @@ async def init_db():
         await conn.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, payment_id TEXT UNIQUE, user_id BIGINT, product_id INTEGER, amount_ltc FLOAT, status TEXT DEFAULT 'waiting', type TEXT DEFAULT 'product', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
 
-        # 2. SMART UPDATE (Eski bazaga yangi ustunlarni qo'shish)
-        # Agar bu ustunlar oldin bo'lmasa, kod o'zi qo'shib qo'yadi
+        # 2. SMART UPDATE (MUHIM TUZATISH)
+        # Barcha yetishmayotgan ustunlarni qo'shib chiqamiz
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS content_type TEXT DEFAULT 'text'")
         await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_used BOOLEAN DEFAULT FALSE')
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
         
+        # 🔥 Mana shu qator statistikani tuzatadi:
+        await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        
         # 3. Default rasm
         await conn.execute('''INSERT INTO settings (key, value) VALUES ('main_image', 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png') ON CONFLICT DO NOTHING''')
         
-        logging.info("✅ Baza to'liq yangilandi va tayyor.")
+        logging.info("✅ Baza to'liq yangilandi (created_at qo'shildi).")
     finally:
         await conn.close()
 
@@ -36,7 +39,6 @@ async def init_db():
 async def ensure_user(user_id, username):
     conn = await get_conn()
     try:
-        # Userni qo'shish (agar yo'q bo'lsa)
         await conn.execute('''
             INSERT INTO users (user_id, username, promo_used, referral_count) 
             VALUES ($1, $2, FALSE, 0) 
@@ -73,18 +75,17 @@ async def get_referral_count(user_id):
         return val if val else 0
     finally: await conn.close()
 
-async def get_all_users_ids(): # Rassilka uchun
+async def get_all_users_ids(): 
     conn = await get_conn()
     try:
         rows = await conn.fetch('SELECT user_id FROM users')
         return [r['user_id'] for r in rows]
     finally: await conn.close()
 
-# --- 2. MAHSULOTLAR (Guruhlash va Sklad) ---
+# --- 2. MAHSULOTLAR ---
 async def get_grouped_products_by_city(city):
     conn = await get_conn()
     try:
-        # Userga ko'rsatish uchun guruhlash
         rows = await conn.fetch('''
             SELECT title, price_usd, COUNT(*) as count 
             FROM products 
@@ -95,7 +96,7 @@ async def get_grouped_products_by_city(city):
         return [dict(r) for r in rows]
     finally: await conn.close()
 
-async def get_inventory_status(): # Admin Sklad uchun
+async def get_inventory_status():
     conn = await get_conn()
     try:
         rows = await conn.fetch('''
@@ -153,9 +154,10 @@ async def update_order_status(pid, status):
                 await conn.execute('UPDATE products SET is_sold = TRUE WHERE id = $1', row['product_id'])
     finally: await conn.close()
 
-async def get_user_orders(user_id): # Istoriya
+async def get_user_orders(user_id):
     conn = await get_conn()
     try:
+        # created_at mavjudligiga ishonch hosil qildik
         rows = await conn.fetch('''
             SELECT o.created_at, p.title, p.price_usd 
             FROM orders o 
@@ -166,7 +168,7 @@ async def get_user_orders(user_id): # Istoriya
         return [dict(r) for r in rows]
     finally: await conn.close()
 
-async def get_stats(): # Umumiy Statistika
+async def get_stats():
     conn = await get_conn()
     try:
         u = await conn.fetchval('SELECT COUNT(*) FROM users')
@@ -175,9 +177,10 @@ async def get_stats(): # Umumiy Statistika
         return u, b, s
     finally: await conn.close()
 
-async def get_daily_stats(): # Kunlik Statistika
+async def get_daily_stats():
     conn = await get_conn()
     try:
+        # created_at::date ishlashi uchun ustun bo'lishi shart
         row = await conn.fetchrow('''
             SELECT COUNT(*) as count, COALESCE(SUM(p.price_usd), 0) as total_usd
             FROM orders o
