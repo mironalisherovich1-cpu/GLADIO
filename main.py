@@ -23,6 +23,7 @@ DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# --- STATES ---
 class AddProduct(StatesGroup):
     title = State()
     price = State()
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# --- TO'LOV TIZIMI ---
 async def create_nowpayments_invoice(price_usd):
     url = "https://api.nowpayments.io/v1/payment"
     headers = {"x-api-key": NP_API_KEY, "Content-Type": "application/json"}
@@ -58,34 +60,30 @@ async def create_nowpayments_invoice(price_usd):
             return r.json() if r.status_code == 201 else None
         except: return None
 
+# --- TOVAR YUBORISH ---
 async def send_product_to_user(user_id, product):
     if product.get('content_type') == 'photo':
         await bot.send_photo(chat_id=user_id, photo=product['content'], caption=f"📦 **Tovaringiz:** {product['title']}", reply_markup=kb.kb_leave_review(), parse_mode="Markdown")
     else:
         await bot.send_message(chat_id=user_id, text=f"📦 **Tovaringiz:**\n\n`{product['content']}`", reply_markup=kb.kb_leave_review(), parse_mode="Markdown")
 
-# --- START & REFERAL SYSTEM ---
+# --- START VA REFERAL ---
 @dp.message(CommandStart())
 @dp.message(F.text == "🏠 Главное меню")
 async def start(message: types.Message, command: CommandObject = None, state: FSMContext = None):
     if state: await state.clear()
-    
     user_id = message.from_user.id
     
-    # User oldin bormi?
+    # Userni tekshirish
     is_old_user = await db.check_user_exists(user_id)
-    
-    # Bazaga yozamiz
     await db.ensure_user(user_id, message.from_user.username)
     
-    # Agar YANGI user bo'lsa va referal orqali kirgan bo'lsa
+    # Referal logikasi
     if not is_old_user and command and command.args:
         try:
             referrer_id = int(command.args)
-            # O'zini o'zi taklif qilolmaydi
-            if referrer_id != user_id:
+            if referrer_id != user_id: # O'zini chaqirolmaydi
                 await db.increment_referral(referrer_id)
-                # Referrerga xabar
                 try: await bot.send_message(referrer_id, f"🎉 Sizda yangi referal bor! ({message.from_user.full_name})")
                 except: pass
         except: pass
@@ -107,54 +105,38 @@ async def show_shop(call: types.CallbackQuery):
     if not grouped: await call.answer("❌ Товаров пока нет", show_alert=True)
     else: await call.message.edit_caption(caption=f"🛒 **Товары ({u['city']}):**", reply_markup=kb.kb_shop(grouped), parse_mode="Markdown")
 
-# --- PROFIL VA YANGILIKLAR ---
+# --- PROFIL VA TARI X ---
 @dp.callback_query(F.data == "profile")
 async def profile_view(call: types.CallbackQuery):
     u = await db.get_user(call.from_user.id)
     ref_count = await db.get_referral_count(call.from_user.id)
     
-    # Skidka foizini hisoblash
+    # Skidka hisoblash
     if ref_count >= 10: skidka = 7
     elif ref_count >= 5: skidka = 5
     else: skidka = 0
 
-    text = (
-        f"👤 **Mening profilim:**\n"
-        f"🆔 ID: `{u['user_id']}`\n"
-        f"🏧 Balans: **{u['balance']} $**\n"
-        f"👥 Takliflar: **{ref_count} ta**\n"
-        f"📉 Mening skidkam: **{skidka}%**"
-    )
+    text = (f"👤 **Mening profilim:**\n🆔 ID: `{u['user_id']}`\n🏧 Balans: **{u['balance']} $**\n👥 Takliflar: **{ref_count} ta**\n📉 Mening skidkam: **{skidka}%**")
     await call.message.edit_caption(caption=text, reply_markup=kb.kb_profile(), parse_mode="Markdown")
 
-# 1. REFERAL PROGRAMMA
 @dp.callback_query(F.data == "referral")
 async def show_referral(call: types.CallbackQuery):
     bot_info = await bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={call.from_user.id}"
-    text = (
-        "👥 **Referal Tizimi**\n\n"
-        "Do'stlaringizni chaqiring va skidka oling!\n\n"
-        "🔹 5 ta do'st = **5% skidka**\n"
-        "🔹 10 ta do'st = **7% skidka**\n\n"
-        f"🔗 **Sizning ssilkangiz:**\n`{ref_link}`"
-    )
+    text = ("👥 **Referal Tizimi**\n\nDo'stlaringizni chaqiring va skidka oling!\n\n🔹 5 ta do'st = **5% skidka**\n🔹 10 ta do'st = **7% skidka**\n\n" f"🔗 **Sizning ssilkangiz:**\n`{ref_link}`")
     await call.message.answer(text, reply_markup=kb.kb_back(), parse_mode="Markdown")
     await call.answer()
 
-# 2. ISTORIYA POKUPOK
 @dp.callback_query(F.data == "history")
 async def show_history(call: types.CallbackQuery):
     orders = await db.get_user_orders(call.from_user.id)
     if not orders:
         await call.answer("❌ Siz hali hech narsa sotib olmagansiz.", show_alert=True)
         return
-    
-    text = "📜 **Xaridlar tarixi:**\n\n"
+    text = "📜 **Xaridlar tarixi (Oxirgi 10 ta):**\n\n"
     for o in orders:
         date = o['created_at'].strftime("%Y-%m-%d %H:%M")
-        text += f"📅 {date} | 📦 {o['title']} | 💰 {o['price_usd']}$\n"
-    
+        text += f"📅 {date}\n📦 {o['title']} | 💰 {o['price_usd']}$\n\n"
     await call.message.answer(text, reply_markup=kb.kb_back(), parse_mode="Markdown")
     await call.answer()
 
@@ -164,49 +146,43 @@ async def buy_start_title(call: types.CallbackQuery):
     title = call.data.split("buy_title:")[1]
     u = await db.get_user(call.from_user.id)
     product = await db.get_one_product_by_title(title, u['city'])
-    
-    if not product:
-        await call.answer("❌ Bu tovar tugagan!", show_alert=True)
-        return
+    if not product: return await call.answer("❌ Bu tovar tugagan!", show_alert=True)
 
-    # SKIDKA HISOBLASH
+    # Skidkani aniqlash
     ref_count = await db.get_referral_count(call.from_user.id)
     discount_percent = 0
     if ref_count >= 10: discount_percent = 7
     elif ref_count >= 5: discount_percent = 5
     
-    original_price = product['price_usd']
-    # Yangi narx
-    final_price = original_price * (1 - discount_percent / 100)
-    final_price = round(final_price, 2) # 2 xona yaxlitlash
-
+    # Narxni hisoblash
+    final_price = round(product['price_usd'] * (1 - discount_percent / 100), 2)
     pid = str(product['id'])
     
-    # 1. BALANS
+    # 1. BALANSDAN OLISH
     if u['balance'] >= final_price:
         await db.admin_update_balance(call.from_user.id, -final_price)
         await call.message.delete()
         await send_product_to_user(call.from_user.id, product)
+        
+        # Sotildi deb belgilash
         conn = await db.get_conn()
         await conn.execute('UPDATE products SET is_sold = TRUE WHERE id = $1', int(pid))
         await conn.close()
+        
+        # Adminga xabar (Balans)
         await bot.send_message(ADMIN_ID, f"💰 SOTILDI (Balans): {product['title']} (Narx: {final_price}$)")
         return
 
-    # 2. KRIPTO
+    # 2. KRIPTO TO'LOV
     pd = await create_nowpayments_invoice(final_price)
     if pd:
         await db.create_order(call.from_user.id, pid, pd['payment_id'], pd['pay_amount'], 'product')
         
-        # Narx haqida ma'lumot
-        price_text = f"{original_price}$"
-        if discount_percent > 0:
-            price_text = f"~{original_price}$~ {final_price}$ (-{discount_percent}%)"
-            
-        await call.message.answer(
-            f"🛒 **{product['title']}**\n💵 Narx: {price_text}\nTo'lang: `{pd['pay_amount']}` LTC\nAdres: `{pd['pay_address']}`", 
-            reply_markup=kb.kb_back(), parse_mode="Markdown"
-        )
+        # Narxni chiroyli ko'rsatish
+        price_text = f"{product['price_usd']}$"
+        if discount_percent > 0: price_text = f"~{product['price_usd']}$~ {final_price}$ (-{discount_percent}%)"
+        
+        await call.message.answer(f"🛒 **{product['title']}**\n💵 Narx: {price_text}\nTo'lang: `{pd['pay_amount']}` LTC\nAdres: `{pd['pay_address']}`", reply_markup=kb.kb_back(), parse_mode="Markdown")
         await call.message.answer(pd['pay_address'])
 
 # --- ADMIN PANEL ---
@@ -214,39 +190,68 @@ async def buy_start_title(call: types.CallbackQuery):
 async def admin_panel(message: types.Message):
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# RASSILKA (BROADCAST)
+# 1. STATISTIKA (KUNLIK + UMUMIY)
+@dp.callback_query(F.data == "admin_stats")
+async def show_stats(call: types.CallbackQuery):
+    u, b, s = await db.get_stats()
+    today_count, today_usd = await db.get_daily_stats()
+    
+    text = (
+        f"📊 **Bot Statistikasi:**\n\n"
+        f"📅 **BUGUN:**\n"
+        f"   • Sotildi: **{today_count} ta**\n"
+        f"   • Foyda: **{today_usd} $**\n\n"
+        f"🌍 **UMUMIY:**\n"
+        f"   • Foydalanuvchilar: {u}\n"
+        f"   • Jami sotilgan: {s} ta\n"
+        f"   • Userlar balansi: {b} $"
+    )
+    await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+
+# 2. SKLAD (QOLDIQ)
+@dp.callback_query(F.data == "admin_stock")
+async def show_stock(call: types.CallbackQuery):
+    items = await db.get_inventory_status()
+    if not items:
+        await call.answer("📦 Ombor bo'm-bo'sh!", show_alert=True)
+        return
+
+    text = "📦 **SKLAD HOLATI (Qoldiq):**\n\n"
+    current_city = ""
+    for item in items:
+        if item['city'] != current_city:
+            text += f"\n📍 **{item['city'].capitalize()}:**\n"
+            current_city = item['city']
+        text += f"   🔹 {item['title']}: **{item['count']} ta**\n"
+        
+    await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+
+# 3. RASSILKA (BROADCAST)
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_bc_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.broadcast_msg)
-    await call.message.answer("📢 **Rassilka:**\nXabarni yuboring (Rasm+Text yoki faqat Text):", reply_markup=kb.kb_back())
+    await call.message.answer("📢 **Rassilka:**\nXabarni yuboring (Rasm, matn, video...):", reply_markup=kb.kb_back())
 
 @dp.message(AdminState.broadcast_msg)
 async def admin_bc_send(message: types.Message, state: FSMContext):
     users = await db.get_all_users_ids()
     count = 0
     blocked = 0
-    
     status_msg = await message.answer(f"⏳ Yuborilyapti... (Jami: {len(users)})")
     
     for uid in users:
         try:
-            # Copy methodi xabarni (rasm, video, text) shundayligicha ko'chirib yuboradi
+            # Copy methodi xabarni o'zgarishsiz nusxalab yuboradi
             await message.copy_to(chat_id=uid)
             count += 1
-            await asyncio.sleep(0.05) # Spam bo'lmasligi uchun ozgina pauza
-        except:
-            blocked += 1
+            await asyncio.sleep(0.05) # Spam bo'lmasligi uchun
+        except: blocked += 1
             
-    await status_msg.edit_text(f"✅ **Rassilka tugadi!**\n\n📨 Yetib bordi: {count}\n🚫 Bloklaganlar: {blocked}")
+    await status_msg.edit_text(f"✅ **Rassilka tugadi!**\n📨 Yetib bordi: {count}\n🚫 Bloklaganlar: {blocked}")
     await state.clear()
     await message.answer("🛠 Admin panel:", reply_markup=kb.kb_admin())
 
-# ... QOLGAN ADMIN FUNKSIYALARI O'ZGARISHLARSIZ ...
-@dp.callback_query(F.data == "admin_stats")
-async def show_stats(call: types.CallbackQuery):
-    u, b, s = await db.get_stats()
-    await call.message.edit_text(f"📊 User: {u}\n💰 Balance: {b}\n📦 Sold: {s}", reply_markup=kb.kb_admin())
-
+# 4. TOVAR O'CHIRISH
 @dp.callback_query(F.data == "admin_delete")
 async def admin_delete_list(call: types.CallbackQuery):
     await call.message.edit_text("🏙 Qaysi shahardan?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -265,7 +270,7 @@ async def admin_delete_show_grp(call: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("del_grp:"))
 async def admin_delete_final(call: types.CallbackQuery):
     title = call.data.split("del_grp:")[1]
-    await db.delete_product_group(title, "bukhara") # Hozircha hardcode, agar aniq shahar kerak bo'lsa mantiqni o'zgartiramiz
+    await db.delete_product_group(title, "bukhara")
     await db.delete_product_group(title, "tashkent")
     await call.answer("✅ O'chirildi!", show_alert=True)
     await admin_panel(call.message)
@@ -275,6 +280,7 @@ async def back_admin(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
+# 5. TOVAR QO'SHISH
 @dp.callback_query(F.data == "admin_add")
 async def add_pr_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AddProduct.title)
@@ -309,6 +315,7 @@ async def add_content_finish(m: types.Message, state: FSMContext):
     await state.clear()
     await m.answer(f"✅ Tovar qo'shildi!", reply_markup=kb.kb_admin())
 
+# 6. RASM VA BALANS
 @dp.callback_query(F.data == "admin_photo")
 async def admin_ph(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.change_photo)
@@ -394,6 +401,7 @@ async def receive_review(message: types.Message, state: FSMContext):
     await state.clear()
     await start(message, None, state)
 
+# --- WEBHOOKS ---
 @app.post("/tg_webhook")
 async def th(r: Request):
     try: await dp.feed_update(bot, types.Update.model_validate(await r.json(), context={"bot": bot}))
@@ -412,7 +420,8 @@ async def ipn(r: Request):
                 if o['type'] == 'product':
                     pr = await db.get_product(o['product_id'])
                     await send_product_to_user(o['user_id'], pr)
-                    await bot.send_message(ADMIN_ID, f"💰 SOLD: {pr['title']}")
+                    # IPN kelganda ham narxni admin ga chiroyli ko'rsatish
+                    await bot.send_message(ADMIN_ID, f"💰 SOTILDI (Crypto): {pr['title']} (Narx: {o['amount_ltc']} LTC)")
                 elif o['type'] == 'balance':
                     amt = float(d.get('price_amount', 0))
                     await db.add_balance(o['user_id'], amt)
