@@ -21,8 +21,7 @@ NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
-# 🔥 OTZIVLAR KANALI ID (Siz bergan ID: 3832779321)
-# Telegram kanallar uchun oldiga -100 qo'shilishi shart.
+# Otzivlar Kanali (-100 qo'yish shart!)
 REVIEW_CHANNEL_ID = -1003832779321
 
 DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
@@ -30,7 +29,7 @@ DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- HOLATLAR (STATES) ---
+# --- STATES ---
 class AddProduct(StatesGroup):
     title = State()
     price = State()
@@ -77,7 +76,7 @@ async def send_product_to_user(user_id, product):
     except Exception as e:
         logging.error(f"Error sending product: {e}")
 
-# --- START & ASOSIY MENU ---
+# --- ASOSIY MENU ---
 @dp.message(CommandStart())
 @dp.message(F.text == "🏠 Главное меню")
 async def start(message: types.Message, command: CommandObject = None, state: FSMContext = None):
@@ -87,7 +86,6 @@ async def start(message: types.Message, command: CommandObject = None, state: FS
     is_old_user = await db.check_user_exists(user_id)
     await db.ensure_user(user_id, message.from_user.username)
     
-    # Referal orqali kirgan bo'lsa
     if not is_old_user and command and command.args:
         try:
             referrer_id = int(command.args)
@@ -114,17 +112,13 @@ async def show_shop(call: types.CallbackQuery):
     if not grouped: await call.answer("❌ Товаров пока нет", show_alert=True)
     else: await call.message.edit_caption(caption=f"🛒 **Товары ({u['city'].capitalize()}):**", reply_markup=kb.kb_shop(grouped), parse_mode="Markdown")
 
-# --- PROFIL, REFERAL, TARIX ---
 @dp.callback_query(F.data == "profile")
 async def profile_view(call: types.CallbackQuery):
     u = await db.get_user(call.from_user.id)
     ref_count = await db.get_referral_count(call.from_user.id)
-    
-    # Skidka foizini aniqlash
     if ref_count >= 10: skidka = 7
     elif ref_count >= 5: skidka = 5
     else: skidka = 0
-
     text = (f"👤 **Мой профиль:**\n🆔 ID: `{u['user_id']}`\n🏧 Баланс: **{u['balance']} $**\n👥 Приглашено: **{ref_count} чел.**\n📉 Моя скидка: **{skidka}%**")
     await call.message.edit_caption(caption=text, reply_markup=kb.kb_profile(), parse_mode="Markdown")
 
@@ -142,21 +136,18 @@ async def show_history(call: types.CallbackQuery):
     if not orders:
         await call.answer("❌ История пуста.", show_alert=True)
         return
-    
     await call.message.answer("📜 **Ваши последние покупки (макс. 10):**")
     for o in orders:
-        date = o['created_at'].strftime("%Y-%m-%d %H:%M")
+        dt = o.get('created_at')
+        date = dt.strftime("%Y-%m-%d %H:%M") if dt else "??:??"
         caption = f"📅 {date}\n📦 {o['title']} | 💰 {o['price_usd']}$"
-        # Tovarni qayta yuborish
         if o.get('content_type') == 'photo':
             await bot.send_photo(chat_id=call.from_user.id, photo=o['content'], caption=caption)
         else:
             await bot.send_message(chat_id=call.from_user.id, text=f"{caption}\n\n`{o['content']}`", parse_mode="Markdown")
         await asyncio.sleep(0.1)
-
     await call.message.answer("✅ Конец истории.", reply_markup=kb.kb_back())
 
-# --- SOTIB OLISH LOGIKASI ---
 @dp.callback_query(F.data.startswith("buy_title:"))
 async def buy_start_title(call: types.CallbackQuery):
     title = call.data.split("buy_title:")[1]
@@ -164,17 +155,14 @@ async def buy_start_title(call: types.CallbackQuery):
     product = await db.get_one_product_by_title(title, u['city'])
     if not product: return await call.answer("❌ Товар закончился!", show_alert=True)
 
-    # Skidka hisoblash
     ref_count = await db.get_referral_count(call.from_user.id)
     discount_percent = 0
     if ref_count >= 10: discount_percent = 7
     elif ref_count >= 5: discount_percent = 5
     
-    # Narxni hisoblash
     final_price = round(product['price_usd'] * (1 - discount_percent / 100), 2)
     pid = str(product['id'])
     
-    # 1. BALANS ORQALI
     if u['balance'] >= final_price:
         await db.admin_update_balance(call.from_user.id, -final_price)
         await call.message.delete()
@@ -185,53 +173,54 @@ async def buy_start_title(call: types.CallbackQuery):
         await bot.send_message(ADMIN_ID, f"💰 ПРОДАЖА (Баланс): {product['title']} (Цена: {final_price}$)")
         return
 
-    # 2. KRIPTO ORQALI
     pd = await create_nowpayments_invoice(final_price)
     if pd:
         await db.create_order(call.from_user.id, pid, pd['payment_id'], pd['pay_amount'], 'product')
         price_text = f"{product['price_usd']}$"
         if discount_percent > 0: price_text = f"~{product['price_usd']}$~ {final_price}$ (-{discount_percent}%)"
-        
         await call.message.answer(f"🛒 **{product['title']}**\n💵 Цена: {price_text}\nОплатите: `{pd['pay_amount']}` LTC\nАдрес: `{pd['pay_address']}`", reply_markup=kb.kb_back(), parse_mode="Markdown")
         await call.message.answer(pd['pay_address'])
 
-# --- ADMIN PANEL ---
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin_panel(message: types.Message):
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# 🔥 STATISTIKA (FULL)
+# 🔥 STATISTIKA (XATOSIZ VERSIYA)
 @dp.callback_query(F.data == "admin_stats")
 async def show_stats(call: types.CallbackQuery):
-    u, b, s = await db.get_stats()
-    today_count, today_usd = await db.get_daily_stats()
-    recent_sales = await db.get_recent_sales_detailed()
-    top_users = await db.get_top_users_by_balance()
-    
-    # 1. Umumiy va Kunlik
-    text = (
-        f"📊 **Статистика бота:**\n\n"
-        f"📅 **СЕГОДНЯ:**\n   • Продано: **{today_count} шт**\n   • Прибыль: **{today_usd} $**\n\n"
-        f"🌍 **ОБЩАЯ:**\n   • Юзеров: **{u}**\n   • Всего продаж: {s}\n   • Балансы юзеров: {b} $\n\n"
-    )
+    try:
+        u, b, s = await db.get_stats()
+        today_count, today_usd = await db.get_daily_stats()
+        recent_sales = await db.get_recent_sales_detailed()
+        top_users = await db.get_top_users_by_balance()
+        
+        text = (
+            f"📊 **Статистика бота:**\n\n"
+            f"📅 **СЕГОДНЯ:**\n   • Продано: **{today_count} шт**\n   • Прибыль: **{today_usd} $**\n\n"
+            f"🌍 **ОБЩАЯ:**\n   • Юзеров: **{u}**\n   • Всего продаж: {s}\n   • Балансы юзеров: {b} $\n\n"
+        )
 
-    # 2. TOP 10 Users
-    if top_users:
-        text += "💎 **ТОП-10 БОГАЧЕЙ:**\n"
-        for i, user in enumerate(top_users, 1):
-             name = user['username'] or user['user_id']
-             text += f"{i}. @{name} — {user['balance']}$ (Ref: {user['referral_count']})\n"
-        text += "\n"
+        if top_users:
+            text += "💎 **ТОП-10 БОГАЧЕЙ:**\n"
+            for i, user in enumerate(top_users, 1):
+                 name = user.get('username') or user['user_id']
+                 bal = user.get('balance', 0)
+                 text += f"{i}. @{name} — {bal}$ (Ref: {user.get('referral_count', 0)})\n"
+            text += "\n"
 
-    # 3. Oxirgi sotuvlar
-    if recent_sales:
-        text += "📝 **ПОСЛЕДНИЕ ПРОДАЖИ:**\n"
-        for sale in recent_sales:
-            time = sale['created_at'].strftime("%H:%M")
-            username = sale['username'] or sale['user_id']
-            text += f"🔹 {time} | @{username} | {sale['title']} ({sale['price_usd']}$)\n"
+        if recent_sales:
+            text += "📝 **ПОСЛЕДНИЕ ПРОДАЖИ:**\n"
+            for sale in recent_sales:
+                # XAVFSIZ VAQT FORMATLASH
+                dt = sale.get('created_at')
+                time = dt.strftime("%H:%M") if dt else "--:--"
+                username = sale.get('username') or sale.get('user_id')
+                text += f"🔹 {time} | @{username} | {sale['title']} ({sale['price_usd']}$)\n"
 
-    await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+        await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Statistika xatosi: {e}")
+        await call.answer("⚠️ Ma'lumot olishda xatolik! Loglarni tekshiring.", show_alert=True)
 
 @dp.callback_query(F.data == "admin_stock")
 async def show_stock(call: types.CallbackQuery):
@@ -239,7 +228,6 @@ async def show_stock(call: types.CallbackQuery):
     if not items:
         await call.answer("📦 Склад пуст!", show_alert=True)
         return
-
     text = "📦 **СКЛАД (Остаток):**\n\n"
     current_city = ""
     for item in items:
@@ -259,14 +247,12 @@ async def admin_bc_send(message: types.Message, state: FSMContext):
     users = await db.get_all_users_ids()
     count, blocked = 0, 0
     status_msg = await message.answer(f"⏳ Отправка... (Всего: {len(users)})")
-    
     for uid in users:
         try:
             await message.copy_to(chat_id=uid)
             count += 1
             await asyncio.sleep(0.05)
         except: blocked += 1
-            
     await status_msg.edit_text(f"✅ **Рассылка завершена!**\n📨 Доставлено: {count}\n🚫 Блок: {blocked}")
     await state.clear()
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
@@ -363,7 +349,6 @@ async def admin_bal_save(m: types.Message, state: FSMContext):
     await m.answer("✅ Баланс изменен!", reply_markup=kb.kb_admin())
     await state.clear()
 
-# --- QO'SHIMCHA CALLBACKLAR ---
 @dp.callback_query(F.data == "enter_promo")
 async def ask_promo(call: types.CallbackQuery, state: FSMContext):
     u = await db.get_user(call.from_user.id)
@@ -405,7 +390,6 @@ async def back_to_start_handler(call: types.CallbackQuery, state: FSMContext):
     try: await call.message.answer_photo(img, "🏠 **Главное меню:**", reply_markup=kb.kb_main(), parse_mode="Markdown")
     except: await call.message.answer("🏠 **Главное меню:**", reply_markup=kb.kb_main())
 
-# 🔥 OTZIV YOZISH (KANALGA)
 @dp.callback_query(F.data == "write_review")
 async def ask_review(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.writing_review)
@@ -415,19 +399,15 @@ async def ask_review(call: types.CallbackQuery, state: FSMContext):
 @dp.message(UserState.writing_review)
 async def receive_review(message: types.Message, state: FSMContext):
     try:
-        # User yuborgan narsani (rasm, video, text) shundayligicha kanalga ko'chiramiz
         await bot.copy_message(chat_id=REVIEW_CHANNEL_ID, from_chat_id=message.chat.id, message_id=message.message_id)
         await message.answer("✅ Отзыв опубликован в канале! Спасибо!")
     except Exception as e:
         logging.error(f"Kanal xatoligi: {e}")
-        # Agar bot kanalda admin bo'lmasa, adminga tashlaydi
         await bot.forward_message(chat_id=ADMIN_ID, from_chat_id=message.chat.id, message_id=message.message_id)
         await message.answer("✅ Отзыв отправлен администратору!")
-
     await state.clear()
     await start(message, None, state)
 
-# --- WEBHOOKS ---
 @app.post("/tg_webhook")
 async def th(r: Request):
     try: await dp.feed_update(bot, types.Update.model_validate(await r.json(), context={"bot": bot}))
@@ -445,13 +425,10 @@ async def ipn(r: Request):
                 await db.update_order_status(pid, 'paid')
                 if o['type'] == 'product':
                     pr = await db.get_product(o['product_id'])
-                    # Userga tovar berish
                     await send_product_to_user(o['user_id'], pr)
-                    # Adminga xabar
                     await bot.send_message(ADMIN_ID, f"💰 ПРОДАЖА (Крипто): {pr['title']} (Цена: {o['amount_ltc']} LTC)")
                 elif o['type'] == 'balance':
                     amt = float(d.get('price_amount', 0))
-                    # Balans to'ldirish
                     await db.add_balance(o['user_id'], amt)
                     await bot.send_message(o['user_id'], f"✅ Баланс пополнен +{amt}$")
         return {"ok": True}
