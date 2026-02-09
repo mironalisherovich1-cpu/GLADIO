@@ -12,38 +12,112 @@ async def get_conn():
 async def init_db():
     conn = await get_conn()
     try:
-        # 1. Jadvallarni yaratish
+        # Jadvallar
         await conn.execute('''CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, balance FLOAT DEFAULT 0.0, city TEXT DEFAULT 'bukhara', promo_used BOOLEAN DEFAULT FALSE, referral_count INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, title TEXT, price_usd FLOAT, content TEXT, city TEXT, is_sold BOOLEAN DEFAULT FALSE, content_type TEXT DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, payment_id TEXT UNIQUE, user_id BIGINT, product_id INTEGER, amount_ltc FLOAT, status TEXT DEFAULT 'waiting', type TEXT DEFAULT 'product', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
 
-        # 2. SMART UPDATE (MUHIM TUZATISH)
-        # Barcha yetishmayotgan ustunlarni qo'shib chiqamiz
+        # Yetishmayotgan ustunlarni qo'shish (Migratsiya)
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS content_type TEXT DEFAULT 'text'")
         await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_used BOOLEAN DEFAULT FALSE')
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
-        
-        # 🔥 Mana shu qator statistikani tuzatadi:
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         
-        # 3. Default rasm
+        # Default rasm
         await conn.execute('''INSERT INTO settings (key, value) VALUES ('main_image', 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png') ON CONFLICT DO NOTHING''')
-        
-        logging.info("✅ Baza to'liq yangilandi (created_at qo'shildi).")
+        logging.info("✅ База данных успешно обновлена.")
     finally:
         await conn.close()
 
-# --- 1. USER VA REFERAL ---
-async def ensure_user(user_id, username):
+# --- 1. STATISTIKA UCHUN FUNKSIYALAR ---
+
+async def get_top_users_by_balance():
+    """Eng boy 10 ta foydalanuvchini qaytaradi"""
     conn = await get_conn()
     try:
-        await conn.execute('''
-            INSERT INTO users (user_id, username, promo_used, referral_count) 
-            VALUES ($1, $2, FALSE, 0) 
-            ON CONFLICT (user_id) DO UPDATE SET username = $2
-        ''', user_id, username)
+        rows = await conn.fetch('''
+            SELECT user_id, username, balance, referral_count 
+            FROM users 
+            ORDER BY balance DESC 
+            LIMIT 10
+        ''')
+        return [dict(r) for r in rows]
+    finally: await conn.close()
+
+async def get_recent_sales_detailed():
+    """Oxirgi 10 ta sotuvni user ma'lumotlari bilan qaytaradi"""
+    conn = await get_conn()
+    try:
+        rows = await conn.fetch('''
+            SELECT o.created_at, u.username, u.user_id, p.title, p.price_usd 
+            FROM orders o
+            JOIN users u ON o.user_id = u.user_id
+            JOIN products p ON o.product_id = p.id
+            WHERE o.status = 'paid' AND o.type = 'product'
+            ORDER BY o.created_at DESC
+            LIMIT 10
+        ''')
+        return [dict(r) for r in rows]
+    finally: await conn.close()
+
+async def get_daily_stats():
+    """Bugungi savdo va foyda"""
+    conn = await get_conn()
+    try:
+        row = await conn.fetchrow('''
+            SELECT COUNT(*) as count, COALESCE(SUM(p.price_usd), 0) as total_usd
+            FROM orders o
+            JOIN products p ON o.product_id = p.id
+            WHERE o.status = 'paid' AND o.type = 'product' AND o.created_at::date = CURRENT_DATE
+        ''')
+        return row['count'], row['total_usd']
+    finally: await conn.close()
+
+async def get_inventory_status():
+    """Ombordagi qoldiqlar"""
+    conn = await get_conn()
+    try:
+        rows = await conn.fetch('''
+            SELECT city, title, COUNT(*) as count 
+            FROM products 
+            WHERE is_sold = FALSE 
+            GROUP BY city, title 
+            ORDER BY city, title
+        ''')
+        return [dict(r) for r in rows]
+    finally: await conn.close()
+
+async def get_stats():
+    """Umumiy statistika"""
+    conn = await get_conn()
+    try:
+        u = await conn.fetchval('SELECT COUNT(*) FROM users')
+        b = await conn.fetchval('SELECT COALESCE(SUM(balance), 0) FROM users')
+        s = await conn.fetchval('SELECT COUNT(*) FROM products WHERE is_sold = TRUE')
+        return u, b, s
+    finally: await conn.close()
+
+# --- 2. USER VA ISTORIYA ---
+
+async def get_user_orders_with_content(user_id):
+    """Userning xarid tarixi (Content bilan)"""
+    conn = await get_conn()
+    try:
+        rows = await conn.fetch('''
+            SELECT o.created_at, p.title, p.price_usd, p.content, p.content_type 
+            FROM orders o 
+            JOIN products p ON o.product_id = p.id 
+            WHERE o.user_id = $1 AND o.status = 'paid' AND o.type = 'product' 
+            ORDER BY o.created_at DESC LIMIT 10
+        ''', user_id)
+        return [dict(r) for r in rows]
+    finally: await conn.close()
+
+async def ensure_user(user_id, username):
+    conn = await get_conn()
+    try: await conn.execute('INSERT INTO users (user_id, username, promo_used, referral_count) VALUES ($1, $2, FALSE, 0) ON CONFLICT (user_id) DO UPDATE SET username = $2', user_id, username)
     finally: await conn.close()
 
 async def check_user_exists(user_id):
@@ -58,11 +132,6 @@ async def get_user(user_id):
     try: return dict(await conn.fetchrow('SELECT * FROM users WHERE user_id = $1', user_id)) if user_id else None
     finally: await conn.close()
 
-async def update_user_city(user_id, city):
-    conn = await get_conn()
-    try: await conn.execute('UPDATE users SET city = $1 WHERE user_id = $2', city, user_id)
-    finally: await conn.close()
-
 async def increment_referral(referrer_id):
     conn = await get_conn()
     try: await conn.execute('UPDATE users SET referral_count = referral_count + 1 WHERE user_id = $1', referrer_id)
@@ -75,37 +144,12 @@ async def get_referral_count(user_id):
         return val if val else 0
     finally: await conn.close()
 
-async def get_all_users_ids(): 
-    conn = await get_conn()
-    try:
-        rows = await conn.fetch('SELECT user_id FROM users')
-        return [r['user_id'] for r in rows]
-    finally: await conn.close()
+# --- 3. MAHSULOT VA SAVDO ---
 
-# --- 2. MAHSULOTLAR ---
 async def get_grouped_products_by_city(city):
     conn = await get_conn()
     try:
-        rows = await conn.fetch('''
-            SELECT title, price_usd, COUNT(*) as count 
-            FROM products 
-            WHERE city = $1 AND is_sold = FALSE 
-            GROUP BY title, price_usd 
-            ORDER BY count DESC
-        ''', city)
-        return [dict(r) for r in rows]
-    finally: await conn.close()
-
-async def get_inventory_status():
-    conn = await get_conn()
-    try:
-        rows = await conn.fetch('''
-            SELECT city, title, COUNT(*) as count 
-            FROM products 
-            WHERE is_sold = FALSE 
-            GROUP BY city, title 
-            ORDER BY city, title
-        ''')
+        rows = await conn.fetch('''SELECT title, price_usd, COUNT(*) as count FROM products WHERE city = $1 AND is_sold = FALSE GROUP BY title, price_usd ORDER BY count DESC''', city)
         return [dict(r) for r in rows]
     finally: await conn.close()
 
@@ -131,7 +175,8 @@ async def get_product(pid):
     try: return dict(await conn.fetchrow('SELECT * FROM products WHERE id = $1', int(pid)))
     finally: await conn.close()
 
-# --- 3. BUYURTMALAR VA STATISTIKA ---
+# --- 4. ORDER VA TO'LOV ---
+
 async def create_order(uid, pid, pay_id, amount, order_type='product'):
     conn = await get_conn()
     try:
@@ -154,43 +199,20 @@ async def update_order_status(pid, status):
                 await conn.execute('UPDATE products SET is_sold = TRUE WHERE id = $1', row['product_id'])
     finally: await conn.close()
 
-async def get_user_orders(user_id):
+# --- 5. RASSILKA VA ADMIN ---
+
+async def get_all_users_ids():
     conn = await get_conn()
     try:
-        # created_at mavjudligiga ishonch hosil qildik
-        rows = await conn.fetch('''
-            SELECT o.created_at, p.title, p.price_usd 
-            FROM orders o 
-            JOIN products p ON o.product_id = p.id 
-            WHERE o.user_id = $1 AND o.status = 'paid' AND o.type = 'product' 
-            ORDER BY o.created_at DESC LIMIT 10
-        ''', user_id)
-        return [dict(r) for r in rows]
+        rows = await conn.fetch('SELECT user_id FROM users')
+        return [r['user_id'] for r in rows]
     finally: await conn.close()
 
-async def get_stats():
+async def update_user_city(user_id, city):
     conn = await get_conn()
-    try:
-        u = await conn.fetchval('SELECT COUNT(*) FROM users')
-        b = await conn.fetchval('SELECT COALESCE(SUM(balance), 0) FROM users')
-        s = await conn.fetchval('SELECT COUNT(*) FROM products WHERE is_sold = TRUE')
-        return u, b, s
+    try: await conn.execute('UPDATE users SET city = $1 WHERE user_id = $2', city, user_id)
     finally: await conn.close()
 
-async def get_daily_stats():
-    conn = await get_conn()
-    try:
-        # created_at::date ishlashi uchun ustun bo'lishi shart
-        row = await conn.fetchrow('''
-            SELECT COUNT(*) as count, COALESCE(SUM(p.price_usd), 0) as total_usd
-            FROM orders o
-            JOIN products p ON o.product_id = p.id
-            WHERE o.status = 'paid' AND o.type = 'product' AND o.created_at::date = CURRENT_DATE
-        ''')
-        return row['count'], row['total_usd']
-    finally: await conn.close()
-
-# --- 4. BALANS VA SOZLAMALAR ---
 async def set_promo_used(user_id, amount):
     conn = await get_conn()
     try: await conn.execute('UPDATE users SET balance = balance + $1, promo_used = TRUE WHERE user_id = $2', amount, user_id)
