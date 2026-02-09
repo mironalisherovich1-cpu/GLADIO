@@ -12,44 +12,45 @@ async def get_conn():
 async def init_db():
     conn = await get_conn()
     try:
-        # Jadvallar
+        # 1. Jadvallarni yaratish
         await conn.execute('''CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, balance FLOAT DEFAULT 0.0, city TEXT DEFAULT 'bukhara', promo_used BOOLEAN DEFAULT FALSE, referral_count INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, title TEXT, price_usd FLOAT, content TEXT, city TEXT, is_sold BOOLEAN DEFAULT FALSE, content_type TEXT DEFAULT 'text', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, payment_id TEXT UNIQUE, user_id BIGINT, product_id INTEGER, amount_ltc FLOAT, status TEXT DEFAULT 'waiting', type TEXT DEFAULT 'product', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
 
-        # Yetishmayotgan ustunlarni qo'shish (Migratsiya)
+        # 2. USTUNLARNI TEKSHIRISH VA QO'SHISH (MIGRATSIYA)
+        # Products
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS content_type TEXT DEFAULT 'text'")
+        # Users
         await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_used BOOLEAN DEFAULT FALSE')
-        await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
+        # Orders
+        await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
+        
+        # 🔥 MUHIM: created_at ustuni bo'lmasa, uni qo'shamiz
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         
         # Default rasm
         await conn.execute('''INSERT INTO settings (key, value) VALUES ('main_image', 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png') ON CONFLICT DO NOTHING''')
-        logging.info("✅ База данных успешно обновлена.")
+        logging.info("✅ Baza tuzatildi va yangilandi.")
+    except Exception as e:
+        logging.error(f"Baza xatoligi: {e}")
     finally:
         await conn.close()
 
-# --- 1. STATISTIKA UCHUN FUNKSIYALAR ---
-
+# --- 1. STATISTIKA FUNKSIYALARI ---
 async def get_top_users_by_balance():
-    """Eng boy 10 ta foydalanuvchini qaytaradi"""
     conn = await get_conn()
     try:
-        rows = await conn.fetch('''
-            SELECT user_id, username, balance, referral_count 
-            FROM users 
-            ORDER BY balance DESC 
-            LIMIT 10
-        ''')
+        rows = await conn.fetch('SELECT user_id, username, balance, referral_count FROM users ORDER BY balance DESC LIMIT 10')
         return [dict(r) for r in rows]
+    except: return [] # Xato bo'lsa bo'sh qaytaradi
     finally: await conn.close()
 
 async def get_recent_sales_detailed():
-    """Oxirgi 10 ta sotuvni user ma'lumotlari bilan qaytaradi"""
     conn = await get_conn()
     try:
+        # User va Product ma'lumotlarini orders bilan birlashtiramiz
         rows = await conn.fetch('''
             SELECT o.created_at, u.username, u.user_id, p.title, p.price_usd 
             FROM orders o
@@ -60,10 +61,12 @@ async def get_recent_sales_detailed():
             LIMIT 10
         ''')
         return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Sales Stats Error: {e}")
+        return []
     finally: await conn.close()
 
 async def get_daily_stats():
-    """Bugungi savdo va foyda"""
     conn = await get_conn()
     try:
         row = await conn.fetchrow('''
@@ -73,36 +76,28 @@ async def get_daily_stats():
             WHERE o.status = 'paid' AND o.type = 'product' AND o.created_at::date = CURRENT_DATE
         ''')
         return row['count'], row['total_usd']
+    except: return 0, 0
     finally: await conn.close()
 
 async def get_inventory_status():
-    """Ombordagi qoldiqlar"""
     conn = await get_conn()
     try:
-        rows = await conn.fetch('''
-            SELECT city, title, COUNT(*) as count 
-            FROM products 
-            WHERE is_sold = FALSE 
-            GROUP BY city, title 
-            ORDER BY city, title
-        ''')
+        rows = await conn.fetch('''SELECT city, title, COUNT(*) as count FROM products WHERE is_sold = FALSE GROUP BY city, title ORDER BY city, title''')
         return [dict(r) for r in rows]
     finally: await conn.close()
 
 async def get_stats():
-    """Umumiy statistika"""
     conn = await get_conn()
     try:
         u = await conn.fetchval('SELECT COUNT(*) FROM users')
         b = await conn.fetchval('SELECT COALESCE(SUM(balance), 0) FROM users')
         s = await conn.fetchval('SELECT COUNT(*) FROM products WHERE is_sold = TRUE')
         return u, b, s
+    except: return 0, 0, 0
     finally: await conn.close()
 
 # --- 2. USER VA ISTORIYA ---
-
 async def get_user_orders_with_content(user_id):
-    """Userning xarid tarixi (Content bilan)"""
     conn = await get_conn()
     try:
         rows = await conn.fetch('''
@@ -113,6 +108,7 @@ async def get_user_orders_with_content(user_id):
             ORDER BY o.created_at DESC LIMIT 10
         ''', user_id)
         return [dict(r) for r in rows]
+    except: return []
     finally: await conn.close()
 
 async def ensure_user(user_id, username):
@@ -145,7 +141,6 @@ async def get_referral_count(user_id):
     finally: await conn.close()
 
 # --- 3. MAHSULOT VA SAVDO ---
-
 async def get_grouped_products_by_city(city):
     conn = await get_conn()
     try:
@@ -176,7 +171,6 @@ async def get_product(pid):
     finally: await conn.close()
 
 # --- 4. ORDER VA TO'LOV ---
-
 async def create_order(uid, pid, pay_id, amount, order_type='product'):
     conn = await get_conn()
     try:
@@ -200,7 +194,6 @@ async def update_order_status(pid, status):
     finally: await conn.close()
 
 # --- 5. RASSILKA VA ADMIN ---
-
 async def get_all_users_ids():
     conn = await get_conn()
     try:
