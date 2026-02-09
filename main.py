@@ -2,6 +2,7 @@ import os
 import logging
 import httpx
 import asyncio
+import html  # HTML kutubxonasi qo'shildi
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, F
@@ -21,7 +22,7 @@ NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
-# Otzivlar Kanali (-100 qo'yish shart!)
+# Otzivlar Kanali (-100 bilan boshlanishi shart)
 REVIEW_CHANNEL_ID = -1003832779321
 
 DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
@@ -67,16 +68,17 @@ async def create_nowpayments_invoice(price_usd):
         except: return None
 
 async def send_product_to_user(user_id, product):
-    caption = f"📦 **Ваш товар:** {product['title']}\n\n✅ Спасибо за покупку!"
+    # Bu yerda HTML ishlatamiz, xavfsizroq
+    caption = f"📦 <b>Ваш товар:</b> {html.escape(product['title'])}\n\n✅ Спасибо за покупку!"
     try:
         if product.get('content_type') == 'photo':
-            await bot.send_photo(chat_id=user_id, photo=product['content'], caption=caption, reply_markup=kb.kb_leave_review(), parse_mode="Markdown")
+            await bot.send_photo(chat_id=user_id, photo=product['content'], caption=caption, reply_markup=kb.kb_leave_review(), parse_mode="HTML")
         else:
-            await bot.send_message(chat_id=user_id, text=f"{caption}\n\n`{product['content']}`", reply_markup=kb.kb_leave_review(), parse_mode="Markdown")
+            await bot.send_message(chat_id=user_id, text=f"{caption}\n\n<code>{html.escape(product['content'])}</code>", reply_markup=kb.kb_leave_review(), parse_mode="HTML")
     except Exception as e:
         logging.error(f"Error sending product: {e}")
 
-# --- ASOSIY MENU ---
+# --- START & ASOSIY MENU ---
 @dp.message(CommandStart())
 @dp.message(F.text == "🏠 Главное меню")
 async def start(message: types.Message, command: CommandObject = None, state: FSMContext = None):
@@ -96,21 +98,21 @@ async def start(message: types.Message, command: CommandObject = None, state: FS
         except: pass
 
     img = await db.get_main_image() or DEFAULT_IMAGE
-    try: await message.answer_photo(img, "🏙 **Выберите город:**", reply_markup=kb.kb_cities(), parse_mode="Markdown")
-    except: await message.answer_photo(DEFAULT_IMAGE, "🏙 **Выберите город:**", reply_markup=kb.kb_cities(), parse_mode="Markdown")
+    try: await message.answer_photo(img, "🏙 <b>Выберите город:</b>", reply_markup=kb.kb_cities(), parse_mode="HTML")
+    except: await message.answer_photo(DEFAULT_IMAGE, "🏙 <b>Выберите город:</b>", reply_markup=kb.kb_cities(), parse_mode="HTML")
     if message.text == "/start": await message.answer("👇 Меню активировано", reply_markup=kb.kb_reply_menu())
 
 @dp.callback_query(F.data.startswith("city:"))
 async def select_city(call: types.CallbackQuery):
     await db.update_user_city(call.from_user.id, call.data.split(":")[1])
-    await call.message.edit_caption(caption="✅ **Город выбран!**", reply_markup=kb.kb_main(), parse_mode="Markdown")
+    await call.message.edit_caption(caption="✅ <b>Город выбран!</b>", reply_markup=kb.kb_main(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "shop_list")
 async def show_shop(call: types.CallbackQuery):
     u = await db.get_user(call.from_user.id)
     grouped = await db.get_grouped_products_by_city(u['city'])
     if not grouped: await call.answer("❌ Товаров пока нет", show_alert=True)
-    else: await call.message.edit_caption(caption=f"🛒 **Товары ({u['city'].capitalize()}):**", reply_markup=kb.kb_shop(grouped), parse_mode="Markdown")
+    else: await call.message.edit_caption(caption=f"🛒 <b>Товары ({u['city'].capitalize()}):</b>", reply_markup=kb.kb_shop(grouped), parse_mode="HTML")
 
 @dp.callback_query(F.data == "profile")
 async def profile_view(call: types.CallbackQuery):
@@ -119,15 +121,15 @@ async def profile_view(call: types.CallbackQuery):
     if ref_count >= 10: skidka = 7
     elif ref_count >= 5: skidka = 5
     else: skidka = 0
-    text = (f"👤 **Мой профиль:**\n🆔 ID: `{u['user_id']}`\n🏧 Баланс: **{u['balance']} $**\n👥 Приглашено: **{ref_count} чел.**\n📉 Моя скидка: **{skidka}%**")
-    await call.message.edit_caption(caption=text, reply_markup=kb.kb_profile(), parse_mode="Markdown")
+    text = (f"👤 <b>Мой профиль:</b>\n🆔 ID: <code>{u['user_id']}</code>\n🏧 Баланс: <b>{u['balance']} $</b>\n👥 Приглашено: <b>{ref_count} чел.</b>\n📉 Моя скидка: <b>{skidka}%</b>")
+    await call.message.edit_caption(caption=text, reply_markup=kb.kb_profile(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "referral")
 async def show_referral(call: types.CallbackQuery):
     bot_info = await bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={call.from_user.id}"
-    text = ("👥 **Реферальная система**\n\nПриглашайте друзей и получайте скидки!\n\n🔹 5 друзей = **5% скидка**\n🔹 10 друзей = **7% скидка**\n\n" f"🔗 **Ваша ссылка:**\n`{ref_link}`")
-    await call.message.answer(text, reply_markup=kb.kb_back(), parse_mode="Markdown")
+    text = ("👥 <b>Реферальная система</b>\n\nПриглашайте друзей и получайте скидки!\n\n🔹 5 друзей = <b>5% скидка</b>\n🔹 10 друзей = <b>7% скидка</b>\n\n" f"🔗 <b>Ваша ссылка:</b>\n<code>{ref_link}</code>")
+    await call.message.answer(text, reply_markup=kb.kb_back(), parse_mode="HTML")
     await call.answer()
 
 @dp.callback_query(F.data == "history")
@@ -136,15 +138,15 @@ async def show_history(call: types.CallbackQuery):
     if not orders:
         await call.answer("❌ История пуста.", show_alert=True)
         return
-    await call.message.answer("📜 **Ваши последние покупки (макс. 10):**")
+    await call.message.answer("📜 <b>Ваши последние покупки (макс. 10):</b>", parse_mode="HTML")
     for o in orders:
         dt = o.get('created_at')
         date = dt.strftime("%Y-%m-%d %H:%M") if dt else "??:??"
-        caption = f"📅 {date}\n📦 {o['title']} | 💰 {o['price_usd']}$"
+        caption = f"📅 {date}\n📦 {html.escape(o['title'])} | 💰 {o['price_usd']}$"
         if o.get('content_type') == 'photo':
-            await bot.send_photo(chat_id=call.from_user.id, photo=o['content'], caption=caption)
+            await bot.send_photo(chat_id=call.from_user.id, photo=o['content'], caption=caption, parse_mode="HTML")
         else:
-            await bot.send_message(chat_id=call.from_user.id, text=f"{caption}\n\n`{o['content']}`", parse_mode="Markdown")
+            await bot.send_message(chat_id=call.from_user.id, text=f"{caption}\n\n<code>{html.escape(o['content'])}</code>", parse_mode="HTML")
         await asyncio.sleep(0.1)
     await call.message.answer("✅ Конец истории.", reply_markup=kb.kb_back())
 
@@ -178,14 +180,14 @@ async def buy_start_title(call: types.CallbackQuery):
         await db.create_order(call.from_user.id, pid, pd['payment_id'], pd['pay_amount'], 'product')
         price_text = f"{product['price_usd']}$"
         if discount_percent > 0: price_text = f"~{product['price_usd']}$~ {final_price}$ (-{discount_percent}%)"
-        await call.message.answer(f"🛒 **{product['title']}**\n💵 Цена: {price_text}\nОплатите: `{pd['pay_amount']}` LTC\nАдрес: `{pd['pay_address']}`", reply_markup=kb.kb_back(), parse_mode="Markdown")
+        await call.message.answer(f"🛒 <b>{product['title']}</b>\n💵 Цена: {price_text}\nОплатите: <code>{pd['pay_amount']}</code> LTC\nАдрес: <code>{pd['pay_address']}</code>", reply_markup=kb.kb_back(), parse_mode="HTML")
         await call.message.answer(pd['pay_address'])
 
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin_panel(message: types.Message):
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# 🔥 STATISTIKA (XATOSIZ VERSIYA)
+# 🔥 STATISTIKA (HTML formatda - Username xatoligini oldini oladi)
 @dp.callback_query(F.data == "admin_stats")
 async def show_stats(call: types.CallbackQuery):
     try:
@@ -194,33 +196,38 @@ async def show_stats(call: types.CallbackQuery):
         recent_sales = await db.get_recent_sales_detailed()
         top_users = await db.get_top_users_by_balance()
         
+        # HTML teglaridan foydalanamiz (<b></b>)
         text = (
-            f"📊 **Статистика бота:**\n\n"
-            f"📅 **СЕГОДНЯ:**\n   • Продано: **{today_count} шт**\n   • Прибыль: **{today_usd} $**\n\n"
-            f"🌍 **ОБЩАЯ:**\n   • Юзеров: **{u}**\n   • Всего продаж: {s}\n   • Балансы юзеров: {b} $\n\n"
+            f"📊 <b>Статистика бота:</b>\n\n"
+            f"📅 <b>СЕГОДНЯ:</b>\n   • Продано: <b>{today_count} шт</b>\n   • Прибыль: <b>{today_usd} $</b>\n\n"
+            f"🌍 <b>ОБЩАЯ:</b>\n   • Юзеров: <b>{u}</b>\n   • Всего продаж: {s}\n   • Балансы юзеров: {b} $\n\n"
         )
 
         if top_users:
-            text += "💎 **ТОП-10 БОГАЧЕЙ:**\n"
+            text += "💎 <b>ТОП-10 БОГАЧЕЙ:</b>\n"
             for i, user in enumerate(top_users, 1):
-                 name = user.get('username') or user['user_id']
+                 # Usernamen ichidagi simvollarni tozalaymiz
+                 raw_name = user.get('username') or str(user['user_id'])
+                 name = html.escape(raw_name) 
                  bal = user.get('balance', 0)
                  text += f"{i}. @{name} — {bal}$ (Ref: {user.get('referral_count', 0)})\n"
             text += "\n"
 
         if recent_sales:
-            text += "📝 **ПОСЛЕДНИЕ ПРОДАЖИ:**\n"
+            text += "📝 <b>ПОСЛЕДНИЕ ПРОДАЖИ:</b>\n"
             for sale in recent_sales:
-                # XAVFSIZ VAQT FORMATLASH
                 dt = sale.get('created_at')
                 time = dt.strftime("%H:%M") if dt else "--:--"
-                username = sale.get('username') or sale.get('user_id')
-                text += f"🔹 {time} | @{username} | {sale['title']} ({sale['price_usd']}$)\n"
+                raw_user = sale.get('username') or str(sale.get('user_id'))
+                username = html.escape(raw_user)
+                title = html.escape(sale['title'])
+                text += f"🔹 {time} | @{username} | {title} ({sale['price_usd']}$)\n"
 
-        await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+        # parse_mode="HTML" qilib yuboramiz
+        await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="HTML")
     except Exception as e:
         logging.error(f"Statistika xatosi: {e}")
-        await call.answer("⚠️ Ma'lumot olishda xatolik! Loglarni tekshiring.", show_alert=True)
+        await call.answer(f"⚠️ Xatolik: {e}", show_alert=True)
 
 @dp.callback_query(F.data == "admin_stock")
 async def show_stock(call: types.CallbackQuery):
@@ -228,19 +235,19 @@ async def show_stock(call: types.CallbackQuery):
     if not items:
         await call.answer("📦 Склад пуст!", show_alert=True)
         return
-    text = "📦 **СКЛАД (Остаток):**\n\n"
+    text = "📦 <b>СКЛАД (Остаток):</b>\n\n"
     current_city = ""
     for item in items:
         if item['city'] != current_city:
-            text += f"\n📍 **{item['city'].capitalize()}:**\n"
+            text += f"\n📍 <b>{item['city'].capitalize()}:</b>\n"
             current_city = item['city']
-        text += f"   🔹 {item['title']}: **{item['count']} шт**\n"
-    await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="Markdown")
+        text += f"   🔹 {item['title']}: <b>{item['count']} шт</b>\n"
+    await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_bc_start(call: types.CallbackQuery, state: FSMContext):
     await state.set_state(AdminState.broadcast_msg)
-    await call.message.answer("📢 **Рассылка:**\nОтправьте сообщение (Фото/Текст/Видео):", reply_markup=kb.kb_back())
+    await call.message.answer("📢 <b>Рассылка:</b>\nОтправьте сообщение (Фото/Текст/Видео):", reply_markup=kb.kb_back(), parse_mode="HTML")
 
 @dp.message(AdminState.broadcast_msg)
 async def admin_bc_send(message: types.Message, state: FSMContext):
@@ -253,7 +260,7 @@ async def admin_bc_send(message: types.Message, state: FSMContext):
             count += 1
             await asyncio.sleep(0.05)
         except: blocked += 1
-    await status_msg.edit_text(f"✅ **Рассылка завершена!**\n📨 Доставлено: {count}\n🚫 Блок: {blocked}")
+    await status_msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n📨 Доставлено: {count}\n🚫 Блок: {blocked}", parse_mode="HTML")
     await state.clear()
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
@@ -377,7 +384,7 @@ async def create_deposit(message: types.Message, state: FSMContext):
         pd = await create_nowpayments_invoice(amt)
         if pd:
             await db.create_order(message.from_user.id, None, pd['payment_id'], pd['pay_amount'], 'balance')
-            await message.answer(f"💰 **Пополнение {amt}$**\nКрипто: `{pd['pay_amount']}` LTC\nАдрес: `{pd['pay_address']}`", parse_mode="Markdown")
+            await message.answer(f"💰 <b>Пополнение {amt}$</b>\nКрипто: <code>{pd['pay_amount']}</code> LTC\nАдрес: <code>{pd['pay_address']}</code>", parse_mode="HTML")
         else: await message.answer("❌ Ошибка.")
     except: await message.answer("❌ Число!")
     await state.clear()
@@ -387,8 +394,8 @@ async def back_to_start_handler(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.delete()
     img = await db.get_main_image() or DEFAULT_IMAGE
-    try: await call.message.answer_photo(img, "🏠 **Главное меню:**", reply_markup=kb.kb_main(), parse_mode="Markdown")
-    except: await call.message.answer("🏠 **Главное меню:**", reply_markup=kb.kb_main())
+    try: await call.message.answer_photo(img, "🏠 <b>Главное меню:</b>", reply_markup=kb.kb_main(), parse_mode="HTML")
+    except: await call.message.answer("🏠 <b>Главное меню:</b>", reply_markup=kb.kb_main(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "write_review")
 async def ask_review(call: types.CallbackQuery, state: FSMContext):
