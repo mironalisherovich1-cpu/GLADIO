@@ -18,24 +18,40 @@ async def init_db():
         await conn.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, payment_id TEXT UNIQUE, user_id BIGINT, product_id INTEGER, amount_ltc FLOAT, status TEXT DEFAULT 'waiting', type TEXT DEFAULT 'product', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
 
-        # Migratsiya (Yetishmayotgan ustunlarni qo'shish)
+        # Migratsiya
         await conn.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS content_type TEXT DEFAULT 'text'")
         await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_used BOOLEAN DEFAULT FALSE')
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_count INTEGER DEFAULT 0")
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'product'")
         await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        
-        # 🔥 MUHIM TUZATISH: Eski bo'sh vaqtlarni to'ldirish
         await conn.execute("UPDATE orders SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
         
-        # Default rasm
         await conn.execute('''INSERT INTO settings (key, value) VALUES ('main_image', 'https://cdn-icons-png.flaticon.com/512/3081/3081559.png') ON CONFLICT DO NOTHING''')
-        logging.info("✅ Baza tuzatildi (NULL vaqtlar to'ldirildi).")
+        logging.info("✅ Baza yangilandi.")
     finally:
         await conn.close()
 
-# --- STATISTIKA FUNKSIYALARI ---
+# --- YANGI: TOP 5 XARIDORLAR ---
+async def get_top_buyers():
+    """Eng ko'p xarid qilgan 5 ta userni qaytaradi"""
+    conn = await get_conn()
+    try:
+        rows = await conn.fetch('''
+            SELECT u.username, u.user_id, COUNT(*) as count
+            FROM orders o
+            JOIN users u ON o.user_id = u.user_id
+            WHERE o.status = 'paid' AND o.type = 'product'
+            GROUP BY u.username, u.user_id
+            ORDER BY count DESC
+            LIMIT 5
+        ''')
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"Top buyers error: {e}")
+        return []
+    finally: await conn.close()
 
+# --- QOLGAN STATISTIKA FUNKSIYALARI ---
 async def get_top_users_by_balance():
     conn = await get_conn()
     try:
@@ -47,7 +63,6 @@ async def get_top_users_by_balance():
 async def get_recent_sales_detailed():
     conn = await get_conn()
     try:
-        # Join qilib ma'lumot olish
         rows = await conn.fetch('''
             SELECT o.created_at, u.username, u.user_id, p.title, p.price_usd 
             FROM orders o
@@ -58,9 +73,7 @@ async def get_recent_sales_detailed():
             LIMIT 10
         ''')
         return [dict(r) for r in rows]
-    except Exception as e:
-        logging.error(f"Recent Sales Error: {e}")
-        return []
+    except: return []
     finally: await conn.close()
 
 async def get_daily_stats():
@@ -87,7 +100,6 @@ async def get_stats():
     finally: await conn.close()
 
 # --- QOLGAN FUNKSIYALAR ---
-
 async def get_inventory_status():
     conn = await get_conn()
     try:
