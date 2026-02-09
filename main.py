@@ -20,12 +20,30 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+# 🔥 KO'P ADMINLARNI O'QISH
+# Railwayda: 123456, 789012, 345678 kabi yozing
+raw_admin_ids = os.getenv("ADMIN_ID", "0")
+ADMIN_IDS = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
+
+# Agar hech kim bo'lmasa, xatolik chiqmasligi uchun 0 qo'shib qo'yamiz
+if not ADMIN_IDS: ADMIN_IDS = [0]
+
+# Otzivlar Kanali (-100 bilan)
 REVIEW_CHANNEL_ID = -1003832779321
+
 DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# --- YORDAMCHI: ADMINLARGA XABAR YUBORISH ---
+async def notify_admins(text):
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except:
+            pass # Agar biror admin botni bloklagan bo'lsa, kod to'xtab qolmaydi
 
 # --- STATES ---
 class AddProduct(StatesGroup):
@@ -53,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# --- YORDAMCHI FUNKSIYALAR ---
+# --- TO'LOV ---
 async def create_nowpayments_invoice(price_usd):
     url = "https://api.nowpayments.io/v1/payment"
     headers = {"x-api-key": NP_API_KEY, "Content-Type": "application/json"}
@@ -74,7 +92,7 @@ async def send_product_to_user(user_id, product):
     except Exception as e:
         logging.error(f"Error sending product: {e}")
 
-# --- START & ASOSIY MENU ---
+# --- START & MENU ---
 @dp.message(CommandStart())
 @dp.message(F.text == "🏠 Главное меню")
 async def start(message: types.Message, command: CommandObject = None, state: FSMContext = None):
@@ -168,7 +186,8 @@ async def buy_start_title(call: types.CallbackQuery):
         conn = await db.get_conn()
         await conn.execute('UPDATE products SET is_sold = TRUE WHERE id = $1', int(pid))
         await conn.close()
-        await bot.send_message(ADMIN_ID, f"💰 ПРОДАЖА (Баланс): {product['title']} (Цена: {final_price}$)")
+        # HAMMA ADMINLARGA XABAR
+        await notify_admins(f"💰 ПРОДАЖА (Баланс): {product['title']} (Цена: {final_price}$)")
         return
 
     pd = await create_nowpayments_invoice(final_price)
@@ -179,11 +198,12 @@ async def buy_start_title(call: types.CallbackQuery):
         await call.message.answer(f"🛒 <b>{product['title']}</b>\n💵 Цена: {price_text}\nОплатите: <code>{pd['pay_amount']}</code> LTC\nАдрес: <code>{pd['pay_address']}</code>", reply_markup=kb.kb_back(), parse_mode="HTML")
         await call.message.answer(pd['pay_address'])
 
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+# --- ADMIN PANEL (KO'P ADMINLAR UCHUN) ---
+# F.from_user.id ADMIN_IDS ro'yxatida bo'lsa ishlaydi
+@dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: types.Message):
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# 🔥 YANGILANGAN STATISTIKA
 @dp.callback_query(F.data == "admin_stats")
 async def show_stats(call: types.CallbackQuery):
     try:
@@ -191,7 +211,7 @@ async def show_stats(call: types.CallbackQuery):
         today_count, today_usd = await db.get_daily_stats()
         recent_sales = await db.get_recent_sales_detailed()
         top_users = await db.get_top_users_by_balance()
-        top_buyers = await db.get_top_buyers() # YANGI
+        top_buyers = await db.get_top_buyers()
         
         text = (
             f"📊 <b>Статистика бота:</b>\n\n"
@@ -208,7 +228,6 @@ async def show_stats(call: types.CallbackQuery):
                  text += f"{i}. @{name} — {bal}$ (Ref: {user.get('referral_count', 0)})\n"
             text += "\n"
 
-        # YANGI BO'LIM
         if top_buyers:
             text += "🏆 <b>ТОП-5 ПОКУПАТЕЛЕЙ (Кол-во):</b>\n"
             for i, user in enumerate(top_buyers, 1):
@@ -414,7 +433,7 @@ async def receive_review(message: types.Message, state: FSMContext):
         await message.answer("✅ Отзыв опубликован в канале! Спасибо!")
     except Exception as e:
         logging.error(f"Kanal xatoligi: {e}")
-        await bot.forward_message(chat_id=ADMIN_ID, from_chat_id=message.chat.id, message_id=message.message_id)
+        await notify_admins(f"⚠️ Kanalga xabar yuborishda xato: {e}")
         await message.answer("✅ Отзыв отправлен администратору!")
     await state.clear()
     await start(message, None, state)
@@ -437,7 +456,8 @@ async def ipn(r: Request):
                 if o['type'] == 'product':
                     pr = await db.get_product(o['product_id'])
                     await send_product_to_user(o['user_id'], pr)
-                    await bot.send_message(ADMIN_ID, f"💰 ПРОДАЖА (Крипто): {pr['title']} (Цена: {o['amount_ltc']} LTC)")
+                    # HAMMA ADMINLARGA XABAR
+                    await notify_admins(f"💰 ПРОДАЖА (Крипто): {pr['title']} (Цена: {o['amount_ltc']} LTC)")
                 elif o['type'] == 'balance':
                     amt = float(d.get('price_amount', 0))
                     await db.add_balance(o['user_id'], amt)
