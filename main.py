@@ -2,7 +2,7 @@ import os
 import logging
 import httpx
 import asyncio
-import html  # HTML kutubxonasi qo'shildi
+import html
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, F
@@ -21,10 +21,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 NP_API_KEY = os.getenv("NOWPAYMENTS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-
-# Otzivlar Kanali (-100 bilan boshlanishi shart)
 REVIEW_CHANNEL_ID = -1003832779321
-
 DEFAULT_IMAGE = "https://cdn-icons-png.flaticon.com/512/3081/3081559.png"
 
 bot = Bot(token=BOT_TOKEN)
@@ -68,7 +65,6 @@ async def create_nowpayments_invoice(price_usd):
         except: return None
 
 async def send_product_to_user(user_id, product):
-    # Bu yerda HTML ishlatamiz, xavfsizroq
     caption = f"📦 <b>Ваш товар:</b> {html.escape(product['title'])}\n\n✅ Спасибо за покупку!"
     try:
         if product.get('content_type') == 'photo':
@@ -187,7 +183,7 @@ async def buy_start_title(call: types.CallbackQuery):
 async def admin_panel(message: types.Message):
     await message.answer("🛠 Админ-панель:", reply_markup=kb.kb_admin())
 
-# 🔥 STATISTIKA (HTML formatda - Username xatoligini oldini oladi)
+# 🔥 YANGILANGAN STATISTIKA
 @dp.callback_query(F.data == "admin_stats")
 async def show_stats(call: types.CallbackQuery):
     try:
@@ -195,8 +191,8 @@ async def show_stats(call: types.CallbackQuery):
         today_count, today_usd = await db.get_daily_stats()
         recent_sales = await db.get_recent_sales_detailed()
         top_users = await db.get_top_users_by_balance()
+        top_buyers = await db.get_top_buyers() # YANGI
         
-        # HTML teglaridan foydalanamiz (<b></b>)
         text = (
             f"📊 <b>Статистика бота:</b>\n\n"
             f"📅 <b>СЕГОДНЯ:</b>\n   • Продано: <b>{today_count} шт</b>\n   • Прибыль: <b>{today_usd} $</b>\n\n"
@@ -204,13 +200,22 @@ async def show_stats(call: types.CallbackQuery):
         )
 
         if top_users:
-            text += "💎 <b>ТОП-10 БОГАЧЕЙ:</b>\n"
+            text += "💎 <b>ТОП-10 БОГАЧЕЙ (Баланс):</b>\n"
             for i, user in enumerate(top_users, 1):
-                 # Usernamen ichidagi simvollarni tozalaymiz
                  raw_name = user.get('username') or str(user['user_id'])
                  name = html.escape(raw_name) 
                  bal = user.get('balance', 0)
                  text += f"{i}. @{name} — {bal}$ (Ref: {user.get('referral_count', 0)})\n"
+            text += "\n"
+
+        # YANGI BO'LIM
+        if top_buyers:
+            text += "🏆 <b>ТОП-5 ПОКУПАТЕЛЕЙ (Кол-во):</b>\n"
+            for i, user in enumerate(top_buyers, 1):
+                 raw_name = user.get('username') or str(user['user_id'])
+                 name = html.escape(raw_name) 
+                 count = user.get('count', 0)
+                 text += f"{i}. @{name} — {count} шт\n"
             text += "\n"
 
         if recent_sales:
@@ -223,7 +228,6 @@ async def show_stats(call: types.CallbackQuery):
                 title = html.escape(sale['title'])
                 text += f"🔹 {time} | @{username} | {title} ({sale['price_usd']}$)\n"
 
-        # parse_mode="HTML" qilib yuboramiz
         await call.message.edit_text(text, reply_markup=kb.kb_admin(), parse_mode="HTML")
     except Exception as e:
         logging.error(f"Statistika xatosi: {e}")
