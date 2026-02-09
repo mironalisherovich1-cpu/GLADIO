@@ -9,9 +9,8 @@ def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
         [InlineKeyboardButton(text="🛒 Магазин", callback_data="shop_list")],
-        # Podderjka o'zgartirildi: chapo73
-        # Otzivlar kanali: Siz bergan ssilka
-        [InlineKeyboardButton(text="🔄 Обмен LTC", url="https://t.me/ltc_obmen"), InlineKeyboardButton(text="❓ Поддержка", url="https://t.me/chapo73")],
+        # O'ZGARISH: LTC obmen linki yangilandi -> https://t.me/ltcsell
+        [InlineKeyboardButton(text="🔄 Обмен LTC", url="https://t.me/ltcsell"), InlineKeyboardButton(text="❓ Поддержка", url="https://t.me/chapo73")],
         [InlineKeyboardButton(text="💬 Отзывы (Канал)", url="https://t.me/+a2w0f5tt22UyN2Qy")]
     ])
 
